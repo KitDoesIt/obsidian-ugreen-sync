@@ -1,10 +1,13 @@
 import { App, ButtonComponent, Modal, Notice, Setting } from 'obsidian';
+import type { DropdownComponent } from 'obsidian';
 import type { SessionContainer, UgosLoginResult } from 'ug-file';
 import { debugLog } from './debug';
 import { createUgreenClient, formatLoginResultError, formatUgreenError } from './ugreen';
 import type { UgreenSyncSettings } from './types';
+import { t } from './i18n';
 
 type UgosLoginCodeRequiredResult = Extract<UgosLoginResult, { requiresCode: true }>;
+type Protocol = 'ugreenlink' | 'https' | 'http';
 
 export interface UgreenLoginModalResult {
 	url: string;
@@ -15,6 +18,8 @@ export interface UgreenLoginModalResult {
 
 interface UgreenLoginModalDraft extends UgreenLoginModalResult {
 	password: string;
+	protocol: Protocol;
+	host: string;
 }
 
 export function openUgreenLoginModal(
@@ -44,6 +49,7 @@ class UgreenLoginModal extends Modal {
 		super(app);
 		this.resolve = resolve;
 		this.settings = settings;
+		const protocol = deriveProtocol(settings.url, settings.ugreenLinkId);
 		this.draft = {
 			url: settings.url,
 			ugreenLinkId: settings.ugreenLinkId,
@@ -56,13 +62,15 @@ class UgreenLoginModal extends Modal {
 				publicKey: '',
 				keepalive: true,
 			},
+			protocol,
+			host: deriveHost(protocol, settings.url, settings.ugreenLinkId),
 		};
 	}
 
 	onOpen(): void {
 		debugLog(this.settings, 'login modal open', {
 			hasSession: this.settings.session !== undefined,
-			mode: this.draft.url.trim() !== '' ? 'url' : 'ugreenlink',
+			protocol: this.draft.protocol,
 		});
 		this.modalEl.classList.add('ugreen-sync-login-modal');
 		this.render();
@@ -79,15 +87,14 @@ class UgreenLoginModal extends Modal {
 
 	private render(): void {
 		this.contentEl.empty();
-		this.setTitle(this.challenge === undefined ? 'Sign in to UGREEN NAS' : 'Enter authenticator code');
+		this.setTitle(this.challenge === undefined ? t('login.title') : t('login.titleOtp'));
 
-		this.contentEl.createEl('p', {
-			text:
-				this.challenge === undefined
-					? 'Sign in before syncing. If UGOS requires OTP, enter the authenticator code without leaving Obsidian.'
-					: 'Enter the current code from your authenticator app to finish signing in.',
-			cls: 'ugreen-sync-login-intro',
-		});
+		if (this.draft.protocol === 'http') {
+			this.contentEl.createEl('div', {
+				text: t('login.httpWarning'),
+				cls: 'ugreen-sync-login-http-warning',
+			});
+		}
 
 		if (this.message !== '') {
 			this.contentEl.createEl('p', {
@@ -106,38 +113,42 @@ class UgreenLoginModal extends Modal {
 
 	private renderConnectionFields(): void {
 		new Setting(this.contentEl)
-			.setName('NAS address')
-			.setDesc('Direct UGOS URL. Leave blank when using UGREENlink ID.')
-			.addText((text) =>
-				text
-					.setPlaceholder('https://your-nas.example.com')
-					.setValue(this.draft.url)
+			.setName(t('login.connectionType'))
+			.setDesc(t('login.connectionTypeDesc'))
+			.addDropdown((dropdown: DropdownComponent) =>
+				dropdown
+					.addOption('ugreenlink', t('login.protocolUgreenlink'))
+					.addOption('https', t('login.protocolHttps'))
+					.addOption('http', t('login.protocolHttp'))
+					.setValue(this.draft.protocol)
 					.onChange((value) => {
-						this.draft.url = value.trim();
+						this.draft.protocol = value as Protocol;
+						this.render();
 					}),
 			);
 
+		const isUgreenLink = this.draft.protocol === 'ugreenlink';
 		new Setting(this.contentEl)
-			.setName('UGREENlink ID')
-			.setDesc('Alternative to direct NAS address.')
+			.setName(isUgreenLink ? t('login.ugreenlinkId') : t('login.nasAddress'))
+			.setDesc(isUgreenLink ? t('login.ugreenlinkIdDesc') : t('login.nasAddressDesc'))
 			.addText((text) =>
 				text
-					.setPlaceholder('Your UGREENlink ID')
-					.setValue(this.draft.ugreenLinkId)
+					.setPlaceholder(isUgreenLink ? t('login.ugreenlinkPlaceholder') : t('login.nasAddressPlaceholder'))
+					.setValue(this.draft.host)
 					.onChange((value) => {
-						this.draft.ugreenLinkId = value.trim();
+						this.draft.host = value.trim();
 					}),
 			);
 
-		new Setting(this.contentEl).setName('Username').addText((text) =>
+		new Setting(this.contentEl).setName(t('login.username')).addText((text) =>
 			text.setValue(this.draft.username).onChange((value) => {
 				this.draft.username = value;
 			}),
 		);
 
 		new Setting(this.contentEl)
-			.setName('Password')
-			.setDesc('Used only for this sign-in and not saved by the plugin.')
+			.setName(t('login.password'))
+			.setDesc(t('login.passwordDesc'))
 			.addText((text) => {
 				text.inputEl.type = 'password';
 				text.onChange((value) => {
@@ -148,11 +159,11 @@ class UgreenLoginModal extends Modal {
 
 	private renderOtpFields(): void {
 		new Setting(this.contentEl)
-			.setName('Authenticator code')
-			.setDesc('Use the current one-time code from your authenticator app.')
+			.setName(t('login.authenticatorCode'))
+			.setDesc(t('login.authCodeDesc'))
 			.addText((text) =>
 				text
-					.setPlaceholder('123456')
+					.setPlaceholder(t('login.authCodePlaceholder'))
 					.setValue(this.otpCode)
 					.onChange((value) => {
 						this.otpCode = value.trim();
@@ -164,14 +175,14 @@ class UgreenLoginModal extends Modal {
 		const actionsEl = this.contentEl.createDiv({ cls: 'ugreen-sync-modal-actions' });
 
 		new ButtonComponent(actionsEl)
-			.setButtonText(this.challenge === undefined ? 'Sign in' : 'Verify code')
+			.setButtonText(this.challenge === undefined ? t('login.signIn') : t('login.verifyCode'))
 			.setCta()
 			.onClick(() => {
 				void (this.challenge === undefined ? this.signIn() : this.verifyCode());
 			});
 
 		new ButtonComponent(actionsEl)
-			.setButtonText('Cancel')
+			.setButtonText(t('login.cancel'))
 			.onClick(() => {
 				if (this.busy) {
 					return;
@@ -194,12 +205,13 @@ class UgreenLoginModal extends Modal {
 		}
 
 		this.busy = true;
-		this.message = 'Signing in...';
+		this.message = t('login.signingIn');
 		this.render();
 
 		try {
+			this.applyProtocol();
 			debugLog(this.settings, 'login password submit', {
-				mode: this.draft.url.trim() !== '' ? 'url' : 'ugreenlink',
+				protocol: this.draft.protocol,
 				hasUsername: this.draft.username.trim() !== '',
 				hasPassword: this.draft.password !== '',
 			});
@@ -247,13 +259,13 @@ class UgreenLoginModal extends Modal {
 		}
 		if (this.otpCode === '') {
 			debugLog(this.settings, 'login otp validation failed', { message: 'Authenticator code is required.' });
-			this.message = 'Authenticator code is required.';
+			this.message = t('login.authCodeRequired');
 			this.render();
 			return;
 		}
 
 		this.busy = true;
-		this.message = 'Verifying code...';
+		this.message = t('login.verifyingCode');
 		this.render();
 
 		try {
@@ -270,14 +282,14 @@ class UgreenLoginModal extends Modal {
 					uid: result.challenge.uid,
 				});
 				this.challenge = result;
-				this.message = 'Enter the next authenticator code and try again.';
+				this.message = t('login.enterNextCode');
 				return;
 			}
 			debugLog(this.settings, 'login otp failed', {
 				code: result.code,
 				message: result.message,
 			});
-			this.message = result.message ?? 'Authenticator code could not be verified. Enter a new code and try again.';
+			this.message = result.message ?? t('login.authCodeFailed');
 		} catch (error) {
 			debugLog(this.settings, 'login otp error', { message: formatUgreenError(error) });
 			this.message = formatUgreenError(error);
@@ -297,20 +309,49 @@ class UgreenLoginModal extends Modal {
 			username: this.draft.username,
 			session: { ...session },
 		});
-		new Notice('UGREEN NAS sign-in succeeded.');
+		new Notice(t('notice.signInSucceeded'));
 		this.close();
 	}
 
+	private applyProtocol(): void {
+		if (this.draft.protocol === 'ugreenlink') {
+			this.draft.url = '';
+			this.draft.ugreenLinkId = this.draft.host;
+		} else {
+			this.draft.url = `${this.draft.protocol}://${this.draft.host}`;
+			this.draft.ugreenLinkId = '';
+		}
+	}
+
 	private validateDraft(): string | undefined {
-		if (this.draft.url.trim() === '' && this.draft.ugreenLinkId.trim() === '') {
-			return 'NAS address or UGREENlink ID is required.';
+		if (this.draft.host === '') {
+			return this.draft.protocol === 'ugreenlink'
+				? t('login.ugreenlinkIdRequired')
+				: t('login.nasAddressRequired');
 		}
 		if (this.draft.username.trim() === '') {
-			return 'Username is required.';
+			return t('login.usernameRequired');
 		}
 		if (this.draft.password === '') {
-			return 'Password is required.';
+			return t('login.passwordRequired');
 		}
 		return undefined;
 	}
+}
+
+function deriveProtocol(url: string, ugreenLinkId: string): Protocol {
+	if (ugreenLinkId.trim() !== '') {
+		return 'ugreenlink';
+	}
+	if (url.trim().toLowerCase().startsWith('http://')) {
+		return 'http';
+	}
+	return 'https';
+}
+
+function deriveHost(protocol: Protocol, url: string, ugreenLinkId: string): string {
+	if (protocol === 'ugreenlink') {
+		return ugreenLinkId;
+	}
+	return url.trim().replace(/^https?:\/\//i, '');
 }

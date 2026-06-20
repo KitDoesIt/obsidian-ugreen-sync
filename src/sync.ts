@@ -17,6 +17,7 @@ import {
 } from './types';
 import { debugLog } from './debug';
 import { CONFLICTS_FOLDER } from './constants';
+import { t } from './i18n';
 
 export async function runSync(
 	vault: Vault,
@@ -276,7 +277,7 @@ function getConflictPath(path: string): string {
 
 async function ensureNoUnresolvedConflicts(vault: Vault): Promise<void> {
 	if (await hasConflictFiles(vault, CONFLICTS_FOLDER)) {
-		throw new Error('Unresolved sync conflicts exist in .conflicts. Resolve them before syncing again.');
+		throw new Error(t('error.unresolvedConflicts'));
 	}
 }
 

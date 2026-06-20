@@ -4,6 +4,7 @@ import { UgosApiError, UgosClient, UgosHttpError } from 'ug-file';
 import type { ConflictAction, SessionContainer, UgosDirent, UgosLoginResult, UgosRoot } from 'ug-file';
 import { UgreenSyncSettings, RemoteFileMeta } from './types';
 import { debugLog } from './debug';
+import { t } from './i18n';
 
 type UgreenClientSettings = Pick<UgreenSyncSettings, 'url' | 'ugreenLinkId'>;
 type UgosLoginFailureResult = Extract<UgosLoginResult, { success: false; requiresCode: false }>;
@@ -161,12 +162,12 @@ export async function prepareAuthenticatedUgreenClient(settings: UgreenSyncSetti
 	const client = createUgreenClient(settings);
 	const session = getSavedSession(settings);
 	if (session === undefined) {
-		throw new Error('Sign in to UGREEN NAS before syncing.');
+		throw new Error(t('error.signInBeforeSync'));
 	}
 
 	const result = await client.login(session);
 	if (!result.success || !(await client.checkLogin())) {
-		throw new Error('UGREEN NAS session expired. Sign in again before syncing.');
+		throw new Error(t('error.sessionExpired'));
 	}
 
 	return client;
@@ -186,19 +187,19 @@ async function getRemoteBaseDirAccessErrorForClient(
 	const rootPaths = getAccessibleRootPaths(root);
 	debugLog(settings, 'remote root access check roots', { path: basePath, rootPaths });
 	if (rootPaths.length === 0) {
-		return 'UGREEN NAS did not report any accessible root folders.';
+		return t('error.noAccessibleRoots');
 	}
 	if (rootPaths.some((rootPath) => isPathInsideRoot(basePath, rootPath))) {
 		return undefined;
 	}
 
-	return 'Use Browse to choose an accessible NAS sync directory.';
+	return t('error.useBrowseToChoose');
 }
 
 export function getRemoteBasePath(settings: UgreenSyncSettings): string {
 	const baseDir = settings.remoteBaseDir.trim();
 	if (baseDir === '') {
-		throw new Error('NAS sync directory is required.');
+		throw new Error(t('error.nasSyncDirRequired'));
 	}
 	return `/${baseDir.replace(/^\/+|\/+$/g, '')}`;
 }
@@ -247,7 +248,11 @@ export async function uploadRemoteFile(
 	const remote = direntToRemoteFile(stat, getRemoteBasePath(settings));
 	if (remote.size !== content.byteLength) {
 		throw new Error(
-			`Remote upload verification failed for ${localPath}: expected ${content.byteLength} bytes, got ${remote.size} bytes.`,
+			t('error.uploadVerificationFailed', {
+				localPath,
+				expected: String(content.byteLength),
+				actual: String(remote.size),
+			}),
 		);
 	}
 	debugLog(settings, 'remote upload complete', { localPath, remotePath, remote });
@@ -283,14 +288,14 @@ export async function trashRemoteFile(
 export function formatUgreenError(error: unknown): string {
 	if (error instanceof UgosApiError) {
 		return joinErrorParts([
-			`UGREEN API error ${error.code}`,
+			t('error.ugreenApiError', { code: String(error.code) }),
 			error.message,
 			getResponseSummary(error.response),
 		]);
 	}
 	if (error instanceof UgosHttpError) {
 		return joinErrorParts([
-			`HTTP ${error.status} ${error.statusText}`,
+			t('error.httpError', { status: String(error.status), statusText: error.statusText }),
 			getTextSummary(error.body),
 		]);
 	}
@@ -302,7 +307,7 @@ export function formatUgreenError(error: unknown): string {
 
 export function formatLoginResultError(result: UgosLoginFailureResult): string {
 	return joinErrorParts([
-		'UGREEN NAS login failed',
+		t('login.loginFailed'),
 		result.message,
 		`code ${result.code}`,
 		getResponseSummary(result.body),
@@ -503,7 +508,7 @@ async function mkdirIfMissing(
 function direntToRemoteFile(entry: UgosDirent, basePath: string): RemoteFileMeta {
 	const prefix = `${basePath}/`;
 	if (!entry.path.startsWith(prefix)) {
-		throw new Error(`Remote path is outside sync directory: ${entry.path}`);
+		throw new Error(t('error.pathOutsideSyncDir', { path: entry.path }));
 	}
 
 	return {
@@ -546,7 +551,7 @@ function getSavedSession(settings: UgreenSyncSettings): SessionContainer | undef
 
 function validateConnectionSettings(settings: UgreenClientSettings): void {
 	if (settings.url.trim() === '' && settings.ugreenLinkId.trim() === '') {
-		throw new Error('NAS address or UGREENlink ID is required.');
+		throw new Error(t('error.connectionRequired'));
 	}
 }
 
@@ -576,7 +581,7 @@ const fetchAdapter: typeof fetch = async (input, init): Promise<Response> => {
 	} else if (typeof init?.body === 'string') {
 		body = init.body;
 	} else if (init?.body != null) {
-		throw new Error('Unsupported request body type.');
+		throw new Error(t('error.unsupportedRequestBody'));
 	}
 
 	contentType = contentType ?? headers['content-type'] ?? headers['Content-Type'];

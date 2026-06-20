@@ -1,5 +1,6 @@
 import { App, ButtonComponent, Component, MarkdownRenderer, Modal, Notice, Vault, normalizePath } from 'obsidian';
 import { CONFLICTS_FOLDER } from './constants';
+import { t } from './i18n';
 
 type ConflictChoice = 'workspace' | 'conflict' | 'both';
 type ConflictSide = 'workspace' | 'conflict';
@@ -72,7 +73,7 @@ export function openConflictPrompt(app: App, onResolve: () => void): void {
 export async function openConflictResolver(app: App, onResolved: (result: ConflictResolveResult) => void): Promise<void> {
 	const conflicts = await getConflictFiles(app.vault);
 	if (conflicts.length === 0) {
-		new Notice('No unresolved UGREEN sync conflicts found.');
+		new Notice(t('notice.noConflicts'));
 		onResolved({ resolvedCount: 0, keptBoth: false, syncAfterResolve: false });
 		return;
 	}
@@ -103,12 +104,12 @@ function getOriginalPath(conflictPath: string): string | null {
 }
 
 function formatMtime(mtime: number | null): string {
-	return mtime === null ? 'Missing' : new Date(mtime).toLocaleString();
+	return mtime === null ? t('conflicts.missing') : new Date(mtime).toLocaleString();
 }
 
 function formatSize(size: number | null): string {
 	if (size === null) {
-		return 'Missing';
+		return t('conflicts.missing');
 	}
 
 	if (size < 1024) {
@@ -128,7 +129,7 @@ function isMarkdownFile(path: string): boolean {
 
 async function readPreview(vault: Vault, path: string): Promise<string> {
 	if (!(await vault.adapter.exists(path))) {
-		return 'File is missing.';
+		return t('conflicts.fileIsMissing');
 	}
 
 	const content = await vault.adapter.read(path);
@@ -223,21 +224,21 @@ class ConflictPromptModal extends Modal {
 	}
 
 	onOpen(): void {
-		this.setTitle('Resolve sync conflicts');
+		this.setTitle(t('conflicts.title'));
 		this.contentEl.empty();
 		this.contentEl.createEl('p', {
-			text: 'UGREEN sync can not proceed while files remain in .conflicts.',
+			text: t('conflicts.conflictPromptLine1'),
 		});
-		this.contentEl.createEl('p', { text: 'Resolve them now?' });
+		this.contentEl.createEl('p', { text: t('conflicts.conflictPromptLine2') });
 
 		const actionsEl = this.contentEl.createDiv({ cls: 'ugreen-sync-modal-actions' });
 		new ButtonComponent(actionsEl)
-			.setButtonText('Cancel sync')
+			.setButtonText(t('conflicts.cancelSync'))
 			.onClick(() => {
 				this.close();
 			});
 		new ButtonComponent(actionsEl)
-			.setButtonText('Resolve now')
+			.setButtonText(t('conflicts.resolveNow'))
 			.setCta()
 			.onClick(() => {
 				this.close();
@@ -288,7 +289,7 @@ class ConflictResolverModal extends Modal {
 			this.renderConfirm();
 			return;
 		}
-		this.setTitle('Resolve sync conflicts');
+		this.setTitle(t('conflicts.title'));
 		this.contentEl.empty();
 		this.contentEl.classList.add('ugreen-sync-conflict-content');
 		this.renderFileHeader(conflict);
@@ -312,12 +313,12 @@ class ConflictResolverModal extends Modal {
 
 		const secondaryActionsEl = this.contentEl.createDiv({ cls: 'ugreen-sync-modal-actions' });
 		new ButtonComponent(secondaryActionsEl)
-			.setButtonText('Cancel resolve')
+			.setButtonText(t('conflicts.cancelResolve'))
 			.onClick(() => {
 				this.close();
 			});
 		const confirmSelectedButton = new ButtonComponent(secondaryActionsEl)
-			.setButtonText('Confirm selected')
+			.setButtonText(t('conflicts.confirmSelected'))
 			.onClick(() => {
 				this.renderConfirm();
 			});
@@ -340,12 +341,12 @@ class ConflictResolverModal extends Modal {
 			.onClick(() => {
 				this.goToIndex(this.index - 1);
 			});
-		previousButton.buttonEl.setAttribute('aria-label', 'Previous conflict');
-		previousButton.buttonEl.setAttribute('title', 'Previous conflict');
+		previousButton.buttonEl.setAttribute('aria-label', t('conflicts.previousConflict'));
+		previousButton.buttonEl.setAttribute('title', t('conflicts.previousConflict'));
 		previousButton.buttonEl.disabled = this.index === 0;
 
 		headerEl.createEl('span', {
-			text: `${this.index + 1} of ${this.conflicts.length}`,
+			text: t('conflicts.ofTotal', { index: String(this.index + 1), total: String(this.conflicts.length) }),
 			cls: 'ugreen-sync-conflict-file-count',
 		});
 
@@ -354,8 +355,8 @@ class ConflictResolverModal extends Modal {
 			.onClick(() => {
 				this.goToIndex(this.index + 1);
 			});
-		nextButton.buttonEl.setAttribute('aria-label', 'Next conflict');
-		nextButton.buttonEl.setAttribute('title', 'Next conflict');
+		nextButton.buttonEl.setAttribute('aria-label', t('conflicts.nextConflict'));
+		nextButton.buttonEl.setAttribute('title', t('conflicts.nextConflict'));
 		nextButton.buttonEl.disabled = this.index >= this.conflicts.length - 1;
 
 		this.contentEl.createEl('p', {
@@ -385,16 +386,16 @@ class ConflictResolverModal extends Modal {
 		columnEl.toggleClass('is-active', paneIndex === this.activePaneIndex);
 		columnEl.toggleClass('is-choice-selected', selectedChoice === side);
 		const headerEl = columnEl.createDiv({ cls: 'ugreen-sync-conflict-header' });
-		headerEl.createEl('h3', { text: pane.title });
+		headerEl.createEl('h3', { text: pane.title === 'Older' ? t('conflicts.older') : t('conflicts.newer') });
 		if (side === 'workspace') {
-			headerEl.createEl('span', { text: 'In vault', cls: 'ugreen-sync-conflict-badge' });
+			headerEl.createEl('span', { text: t('conflicts.inVault'), cls: 'ugreen-sync-conflict-badge' });
 		}
 		columnEl.createEl('p', { text: formatMtime(mtime), cls: 'ugreen-sync-conflict-time' });
 
 		if (isMarkdown) {
 			const previewEl = columnEl.createDiv({ cls: 'ugreen-sync-conflict-preview' });
 			previewEl.classList.add('markdown-rendered');
-			previewEl.createEl('p', { text: 'Loading preview...', cls: 'ugreen-sync-conflict-preview-loading' });
+			previewEl.createEl('p', { text: t('conflicts.loadingPreview'), cls: 'ugreen-sync-conflict-preview-loading' });
 			this.renderPreviewActions(columnEl, conflict, side, selectedChoice);
 			previewRenderTasks.push(this.renderMarkdownPreview(previewEl, path, conflict.originalPath, markdownComponent, renderToken));
 			return previewEl;
@@ -418,7 +419,7 @@ class ConflictResolverModal extends Modal {
 			preview = await readPreview(this.app.vault, path);
 		} catch {
 			if (renderToken === this.renderToken && previewEl.isConnected) {
-				previewEl.setText('Unable to load preview.');
+				previewEl.setText(t('conflicts.unableToLoadPreview'));
 			}
 			return;
 		}
@@ -432,7 +433,7 @@ class ConflictResolverModal extends Modal {
 			await MarkdownRenderer.render(this.app, preview, previewEl, sourcePath, markdownComponent);
 		} catch {
 			if (renderToken === this.renderToken && previewEl.isConnected) {
-				previewEl.setText('Unable to render preview.');
+				previewEl.setText(t('conflicts.unableToRenderPreview'));
 			}
 			return;
 		}
@@ -448,7 +449,7 @@ class ConflictResolverModal extends Modal {
 		tabsEl.setAttribute('role', 'tablist');
 		panes.forEach((pane, index) => {
 			const tabEl = tabsEl.createEl('button', {
-				text: pane.title,
+				text: pane.title === 'Older' ? t('conflicts.older') : t('conflicts.newer'),
 				cls: 'ugreen-sync-conflict-tab',
 			});
 			tabEl.type = 'button';
@@ -524,7 +525,7 @@ class ConflictResolverModal extends Modal {
 		selectedChoice: ConflictChoice | undefined,
 	): void {
 		const button = new ButtonComponent(actionsEl)
-			.setButtonText(selectedChoice === side ? 'Unselect' : 'Keep this version')
+			.setButtonText(selectedChoice === side ? t('conflicts.unselect') : t('conflicts.keepThisVersion'))
 			.onClick(() => {
 				this.choose(conflict, side);
 			});
@@ -532,7 +533,7 @@ class ConflictResolverModal extends Modal {
 			button.setCta();
 		}
 		if (selectedChoice === side) {
-			actionsEl.createEl('span', { text: 'Your choice', cls: 'ugreen-sync-conflict-choice-lock' });
+			actionsEl.createEl('span', { text: t('conflicts.yourChoice'), cls: 'ugreen-sync-conflict-choice-lock' });
 		}
 	}
 
@@ -548,7 +549,7 @@ class ConflictResolverModal extends Modal {
 		selectedChoice: ConflictChoice | undefined,
 	): void {
 		const button = new ButtonComponent(bothActionsEl)
-			.setButtonText(selectedChoice === 'both' ? 'Unselect keep both' : 'Keep both versions')
+			.setButtonText(selectedChoice === 'both' ? t('conflicts.unselectKeepBoth') : t('conflicts.keepBoth'))
 			.onClick(() => {
 				this.choose(conflict, 'both');
 			});
@@ -556,7 +557,7 @@ class ConflictResolverModal extends Modal {
 			button.setCta();
 		}
 		if (selectedChoice === 'both') {
-			bothActionsEl.createEl('span', { text: 'Your choice', cls: 'ugreen-sync-conflict-choice-lock' });
+			bothActionsEl.createEl('span', { text: t('conflicts.yourChoice'), cls: 'ugreen-sync-conflict-choice-lock' });
 		}
 	}
 
@@ -694,7 +695,7 @@ class ConflictResolverModal extends Modal {
 		this.resetMarkdownComponent();
 		const decisions = [...this.decisions.values()];
 		const counts = getDecisionCounts(decisions);
-		this.setTitle('Confirm conflict resolution');
+		this.setTitle(t('conflicts.confirmTitle'));
 		this.contentEl.empty();
 		this.contentEl.classList.remove('ugreen-sync-conflict-content');
 		const backActionsEl = this.contentEl.createDiv({ cls: 'ugreen-sync-modal-actions' });
@@ -704,14 +705,14 @@ class ConflictResolverModal extends Modal {
 				this.index = Math.min(this.decisions.size, this.conflicts.length - 1);
 				void this.renderCurrent();
 			});
-		backButton.buttonEl.setAttribute('aria-label', 'Back to resolver');
-		backButton.buttonEl.setAttribute('title', 'Back to resolver');
+		backButton.buttonEl.setAttribute('aria-label', t('conflicts.backToResolver'));
+		backButton.buttonEl.setAttribute('title', t('conflicts.backToResolver'));
 		this.contentEl.createEl('p', {
-			text: `${decisions.length} of ${this.conflicts.length} conflict files selected.`,
+			text: t('conflicts.conflictFilesSelected', { decisions: String(decisions.length), total: String(this.conflicts.length) }),
 		});
-		this.contentEl.createEl('p', { text: `${counts.older} older versions selected.` });
-		this.contentEl.createEl('p', { text: `${counts.newer} newer versions selected.` });
-		this.contentEl.createEl('p', { text: `${counts.both} files selected to keep both versions.` });
+		this.contentEl.createEl('p', { text: t('conflicts.olderVersionsSelected', { count: String(counts.older) }) });
+		this.contentEl.createEl('p', { text: t('conflicts.newerVersionsSelected', { count: String(counts.newer) }) });
+		this.contentEl.createEl('p', { text: t('conflicts.keepBothSelected', { count: String(counts.both) }) });
 		const resolveAndSyncDisabledReason = getResolveAndSyncDisabledReason(decisions.length, this.conflicts.length, counts.both);
 		if (resolveAndSyncDisabledReason !== undefined) {
 			this.contentEl.createEl('p', {
@@ -721,24 +722,24 @@ class ConflictResolverModal extends Modal {
 		}
 		if (decisions.length < this.conflicts.length) {
 			this.contentEl.createEl('p', {
-				text: `${this.conflicts.length - decisions.length} conflict files will remain unresolved.`,
+				text: t('conflicts.remainingUnresolved', { count: String(this.conflicts.length - decisions.length) }),
 			});
 		}
 
 		const actionsEl = this.contentEl.createDiv({ cls: 'ugreen-sync-modal-actions' });
 		new ButtonComponent(actionsEl)
-			.setButtonText('Cancel resolve')
+			.setButtonText(t('conflicts.cancelResolve'))
 			.onClick(() => {
 				this.close();
 			});
 		const resolveButton = new ButtonComponent(actionsEl)
-			.setButtonText('Resolve')
+			.setButtonText(t('conflicts.resolve'))
 			.onClick(async () => {
 				await this.resolve(decisions, false);
 			});
 		resolveButton.buttonEl.disabled = decisions.length === 0;
 		const resolveAndSyncButton = new ButtonComponent(actionsEl)
-			.setButtonText('Resolve and sync')
+			.setButtonText(t('conflicts.resolveAndSync'))
 			.setCta()
 			.onClick(async () => {
 				await this.resolve(decisions, true);
@@ -749,7 +750,7 @@ class ConflictResolverModal extends Modal {
 	private async resolve(decisions: ConflictDecision[], syncAfterResolve: boolean): Promise<void> {
 		const counts = getDecisionCounts(decisions);
 		await applyDecisions(this.app.vault, decisions);
-		new Notice(`Resolved ${decisions.length} UGREEN sync conflict files.`);
+		new Notice(t('notice.conflictsResolved', { count: String(decisions.length) }));
 		this.onResolved({
 			resolvedCount: decisions.length,
 			keptBoth: counts.both > 0,
@@ -761,11 +762,11 @@ class ConflictResolverModal extends Modal {
 
 function getResolveAndSyncDisabledReason(selectedCount: number, totalCount: number, keepBothCount: number): string | undefined {
 	if (selectedCount < totalCount) {
-		return 'Resolve and sync is disabled until every conflict file has a choice. You can resolve selected files now and resolve the rest later.';
+		return t('conflicts.resolveAndSyncIncomplete');
 	}
 
 	if (keepBothCount > 0) {
-		return 'Resolve and sync is disabled because keep both needs manual review. Select Resolve, review the copied files, then sync manually.';
+		return t('conflicts.resolveAndSyncKeepBoth');
 	}
 
 	return undefined;

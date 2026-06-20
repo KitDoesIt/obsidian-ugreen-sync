@@ -1,5 +1,6 @@
 import { App, Modal, Setting, normalizePath } from 'obsidian';
 import type { UgosClient, UgosDirent } from 'ug-file';
+import { t } from './i18n';
 
 const DIRECTORY_PAGE_LIMIT = 2000;
 
@@ -37,14 +38,14 @@ export class RemoteDirectoryPickerModal extends Modal {
 
 	private render(): void {
 		this.contentEl.empty();
-		this.contentEl.createEl('h2', { text: 'Choose NAS sync directory' });
+		this.contentEl.createEl('h2', { text: t('browser.title') });
 
 		this.selectedPathEl = this.contentEl.createDiv({ cls: 'ugreen-sync-browser-path' });
 		this.updateSelectedPath();
 
 		new Setting(this.contentEl)
-			.setName('Add vault name')
-			.setDesc(`Append ${this.vaultName} to the selected NAS folder.`)
+			.setName(t('browser.addVaultName'))
+			.setDesc(t('browser.addVaultNameDesc', { vaultName: this.vaultName }))
 			.addToggle((toggle) => {
 				toggle.setValue(this.addVaultName).onChange((value) => {
 					this.addVaultName = value;
@@ -53,7 +54,7 @@ export class RemoteDirectoryPickerModal extends Modal {
 			});
 
 		const navigationEl = this.contentEl.createDiv({ cls: 'ugreen-sync-browser-navigation' });
-		const backButtonEl = navigationEl.createEl('button', { text: 'Back' });
+		const backButtonEl = navigationEl.createEl('button', { text: t('browser.back') });
 		backButtonEl.disabled = this.currentPath === '';
 		backButtonEl.addEventListener('click', () => {
 			this.currentPath = this.rootPaths.has(this.currentPath) ? '' : getParentPath(this.currentPath);
@@ -61,19 +62,19 @@ export class RemoteDirectoryPickerModal extends Modal {
 		});
 		navigationEl.createSpan({
 			cls: 'ugreen-sync-browser-current-path',
-			text: this.currentPath === '' ? 'NAS roots' : this.currentPath,
+			text: this.currentPath === '' ? t('browser.nasRoots') : this.currentPath,
 		});
 
 		this.listingEl = this.contentEl.createDiv({ cls: 'ugreen-sync-browser-listing' });
 
 		const actionsEl = this.contentEl.createDiv({ cls: 'ugreen-sync-modal-actions' });
-		this.chooseButtonEl = actionsEl.createEl('button', { text: 'Use this folder' });
+		this.chooseButtonEl = actionsEl.createEl('button', { text: t('browser.useThisFolder') });
 		this.chooseButtonEl.addClass('mod-cta');
 		this.chooseButtonEl.disabled = this.currentPath === '';
 		this.chooseButtonEl.addEventListener('click', () => {
 			void this.chooseCurrentPath();
 		});
-		const cancelButtonEl = actionsEl.createEl('button', { text: 'Cancel' });
+		const cancelButtonEl = actionsEl.createEl('button', { text: t('browser.cancel') });
 		cancelButtonEl.addEventListener('click', () => this.close());
 
 		void this.loadDirectoryEntries();
@@ -81,7 +82,7 @@ export class RemoteDirectoryPickerModal extends Modal {
 
 	private async loadDirectoryEntries(): Promise<void> {
 		const loadId = ++this.directoryLoadId;
-		this.setListingStatus('Loading folders...');
+		this.setListingStatus(t('browser.loadingFolders'));
 
 		try {
 			const directories = await this.listDirectories(this.currentPath);
@@ -89,13 +90,13 @@ export class RemoteDirectoryPickerModal extends Modal {
 				return;
 			}
 			if (directories.length === 0) {
-				this.setListingStatus('No folders here.');
+				this.setListingStatus(t('browser.noFolders'));
 				return;
 			}
 			this.renderDirectoryEntries(directories);
 		} catch (error) {
 			if (loadId === this.directoryLoadId && this.listingEl.isConnected) {
-				this.setListingStatus(`Could not list folders: ${formatError(error)}`);
+				this.setListingStatus(t('browser.listError', { error: formatError(error) }));
 			}
 		}
 	}
@@ -138,7 +139,7 @@ export class RemoteDirectoryPickerModal extends Modal {
 	private async chooseCurrentPath(): Promise<void> {
 		const selectedPath = this.getSelectedPath();
 		if (selectedPath === '') {
-			this.setListingStatus('Choose a NAS folder first.');
+			this.setListingStatus(t('browser.chooseFolderFirst'));
 			return;
 		}
 
@@ -152,7 +153,7 @@ export class RemoteDirectoryPickerModal extends Modal {
 	private updateSelectedPath(): void {
 		const selectedPath = this.getSelectedPath();
 		this.selectedPathEl.setText(
-			selectedPath === '' ? 'Choose a NAS folder.' : `Selected path: ${selectedPath}`,
+			selectedPath === '' ? t('browser.chooseFolderPrompt') : t('browser.selectedPath', { path: selectedPath }),
 		);
 	}
 

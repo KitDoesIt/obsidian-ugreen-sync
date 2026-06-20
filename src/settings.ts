@@ -14,16 +14,20 @@ import {
 import type UgreenSyncPlugin from './main';
 import { RemoteDirectoryPickerModal } from './remote-browser';
 import { formatUgreenError, getRemoteBaseDirAccessError, prepareAuthenticatedUgreenClient } from './ugreen';
+import { t } from './i18n';
 
 const REMOTE_BASE_DIR_CHECK_DEBOUNCE_MS = 600;
 const DEFAULT_AUTO_SYNC_INTERVAL_MINUTES = 15;
-const AUTO_SYNC_INTERVAL_OPTIONS: Record<string, string> = {
-	'1': '1 minute',
-	'5': '5 minutes',
-	'15': '15 minutes',
-	'30': '30 minutes',
-	'60': '1 hour',
-};
+
+function getAutoSyncIntervalOptions(): Record<string, string> {
+	return {
+		'1': t('settings.interval_1min'),
+		'5': t('settings.interval_5min'),
+		'15': t('settings.interval_15min'),
+		'30': t('settings.interval_30min'),
+		'60': t('settings.interval_1hour'),
+	};
+}
 
 export class UgreenSyncSettingTab extends PluginSettingTab {
 	plugin: UgreenSyncPlugin;
@@ -58,15 +62,19 @@ export class UgreenSyncSettingTab extends PluginSettingTab {
 			}
 		};
 		new Setting(connectionCard)
-			.setName(isSignedIn ? 'Signed in' : 'Not signed in')
+			.setName(isSignedIn ? t('settings.signedIn') : t('settings.notSignedIn'))
 			.setDesc(
 				isSignedIn
-					? `Signed in${this.plugin.settings.username.trim() === '' ? '.' : ` as ${this.plugin.settings.username}.`}`
-					: 'Sign in before running sync.',
+					? formatConnectionDesc(
+							this.plugin.settings.url,
+							this.plugin.settings.ugreenLinkId,
+							this.plugin.settings.username,
+						)
+					: t('settings.signInBeforeSync'),
 			)
 			.addButton((button) => {
 				if (isSignedIn) {
-					button.setButtonText('Log out').onClick(() => {
+					button.setButtonText(t('settings.logOut')).onClick(() => {
 						new LogoutConfirmModal(
 							this.app,
 							async () => {
@@ -80,7 +88,7 @@ export class UgreenSyncSettingTab extends PluginSettingTab {
 				}
 
 				button
-					.setButtonText('Sign in')
+					.setButtonText(t('settings.signIn'))
 					.setCta()
 					.onClick(() => {
 						// eslint-disable-next-line @typescript-eslint/no-deprecated -- Path B dual support: <1.13.0 fallback
@@ -88,14 +96,14 @@ export class UgreenSyncSettingTab extends PluginSettingTab {
 					});
 			});
 
-		const settingsCard = this.createSection(containerEl, 'Settings').cardEl;
+		const settingsCard = this.createSection(containerEl, t('settings.heading')).cardEl;
 		new Setting(settingsCard)
-			.setName('NAS sync directory')
-			.setDesc('The plugin creates this directory on the NAS if it does not exist.')
+			.setName(t('settings.nasSyncDir'))
+			.setDesc(t('settings.nasSyncDirDesc'))
 			.addText((text) => {
 				text.inputEl.disabled = !isSignedIn;
 				text
-					.setPlaceholder(isSignedIn ? 'Browse to select' : 'Sign in to config')
+					.setPlaceholder(isSignedIn ? t('settings.browsePlaceholder') : t('settings.signInToConfigPlaceholder'))
 					.setValue(isSignedIn ? this.plugin.settings.remoteBaseDir : '')
 					.onChange(async (value) => {
 						await this.plugin.setRemoteBaseDir(normalizeRemoteBaseDir(value));
@@ -107,7 +115,7 @@ export class UgreenSyncSettingTab extends PluginSettingTab {
 			})
 			.addButton((button) => {
 				button.buttonEl.disabled = !isSignedIn;
-				button.setButtonText('Browse').onClick(async () => {
+				button.setButtonText(t('settings.browse')).onClick(async () => {
 					try {
 						const client = await prepareAuthenticatedUgreenClient(this.plugin.settings);
 						new RemoteDirectoryPickerModal(this.app, {
@@ -121,7 +129,7 @@ export class UgreenSyncSettingTab extends PluginSettingTab {
 							},
 						}).open();
 					} catch (error) {
-						new Notice(`Could not open NAS browser: ${formatUgreenError(error)}`, 8000);
+						new Notice(t('notice.couldNotOpenBrowser', { error: formatUgreenError(error) }), 8000);
 					}
 				});
 			});
@@ -134,7 +142,7 @@ export class UgreenSyncSettingTab extends PluginSettingTab {
 		this.updateNasDirBlockWarning();
 
 		new Setting(settingsCard)
-			.setName('Auto sync')
+			.setName(t('settings.autoSync'))
 			.setDesc(getAutoSyncDescription(this.plugin.settings.hasPendingChanges, this.plugin.settings.lastLocalChangeAt))
 			.addToggle((toggle) => {
 				this.autoSyncToggle = toggle;
@@ -151,11 +159,11 @@ export class UgreenSyncSettingTab extends PluginSettingTab {
 			});
 
 		new Setting(settingsCard)
-			.setName('Auto-sync interval')
-			.setDesc('How often automatic sync runs while auto-sync is enabled.')
+			.setName(t('settings.autoSyncInterval'))
+			.setDesc(t('settings.autoSyncIntervalDesc'))
 			.addDropdown((dropdown) => {
 				dropdown
-					.addOptions(AUTO_SYNC_INTERVAL_OPTIONS)
+					.addOptions(getAutoSyncIntervalOptions())
 					.setValue(String(normalizeAutoSyncIntervalMinutes(this.plugin.settings.autoSyncIntervalMinutes)))
 					.onChange(async (value) => {
 						await this.plugin.setAutoSyncIntervalMinutes(normalizeAutoSyncIntervalMinutes(Number(value)));
@@ -164,7 +172,7 @@ export class UgreenSyncSettingTab extends PluginSettingTab {
 				this.refreshAutoSyncControls();
 			});
 
-		const actionsSection = this.createSection(containerEl, 'Actions');
+		const actionsSection = this.createSection(containerEl, t('settings.actions'));
 		const actionsCard = actionsSection.cardEl;
 		const actionsHeading = actionsSection.headingSetting!;
 		actionsHeading.nameEl.addEventListener('click', () => {
@@ -180,13 +188,13 @@ export class UgreenSyncSettingTab extends PluginSettingTab {
 		});
 
 		new Setting(actionsCard)
-			.setName('Manual sync')
-			.setDesc('Run a sync operation immediately.')
+			.setName(t('settings.manualSync'))
+			.setDesc(t('settings.manualSyncDesc'))
 			.addButton((button) => {
 				actionButtons.push(button.buttonEl);
 				button.buttonEl.disabled = !actionsEnabled;
 				button
-					.setButtonText('Sync now')
+					.setButtonText(t('menu.syncNow'))
 					.setCta()
 					.onClick(() => {
 						void this.plugin.syncNow();
@@ -194,32 +202,32 @@ export class UgreenSyncSettingTab extends PluginSettingTab {
 			});
 
 		new Setting(actionsCard)
-			.setName('Conflict resolver')
-			.setDesc('Conflicted files are stored in .conflicts. You can resolve them using the resolver, or manually clear out the .conflicts folder.')
+			.setName(t('settings.conflictResolver'))
+			.setDesc(t('settings.conflictResolverDesc'))
 			.addButton((button) => {
 				actionButtons.push(button.buttonEl);
 				button.buttonEl.disabled = !actionsEnabled;
-				button.setButtonText('Resolve conflicts').onClick(() => {
+				button.setButtonText(t('settings.resolveConflicts')).onClick(() => {
 					void this.plugin.resolveConflicts();
 				});
 			});
 
 		new Setting(actionsCard)
-			.setName('Sync history')
+			.setName(t('settings.syncHistory'))
 			.setDesc(
 				this.plugin.settings.lastSyncAt === 0
-					? 'This vault has not synced yet.'
-					: `Last synced ${new Date(this.plugin.settings.lastSyncAt).toLocaleString()}.`,
+					? t('settings.neverSynced')
+					: t('settings.lastSynced', { time: new Date(this.plugin.settings.lastSyncAt).toLocaleString() }),
 			)
 			.addButton((button) => {
 				actionButtons.push(button.buttonEl);
 				button.buttonEl.disabled = !actionsEnabled;
-				button.setButtonText('Reset history').onClick(() => {
+				button.setButtonText(t('settings.resetHistory')).onClick(() => {
 					new ResetHistoryConfirmModal(
 						this.app,
 						async () => {
 							await this.plugin.clearSyncHistory();
-							new Notice('UGREEN sync history reset. Files were not deleted.');
+							new Notice(t('notice.resetHistory'));
 							// eslint-disable-next-line @typescript-eslint/no-deprecated -- Path B dual support: <1.13.0 fallback
 							this.display();
 						},
@@ -275,11 +283,11 @@ export class UgreenSyncSettingTab extends PluginSettingTab {
 	}
 
 	private displayDiagnostics(containerEl: HTMLElement): void {
-		const diagnosticsCard = this.createSection(containerEl, 'Diagnostics').cardEl;
+		const diagnosticsCard = this.createSection(containerEl, t('settings.diagnostics')).cardEl;
 
 		new Setting(diagnosticsCard)
-			.setName('Show diagnostics')
-			.setDesc('Turn this off to hide diagnostics settings again.')
+			.setName(t('settings.showDiagnostics'))
+			.setDesc(t('settings.showDiagnosticsDesc'))
 			.addToggle((toggle) =>
 				toggle.setValue(true).onChange((value) => {
 					this.diagnosticsVisible = value;
@@ -291,8 +299,8 @@ export class UgreenSyncSettingTab extends PluginSettingTab {
 			);
 
 		new Setting(diagnosticsCard)
-			.setName('Debug logging')
-			.setDesc('Log sync decisions and file operations to the developer console.')
+			.setName(t('settings.debugLogging'))
+			.setDesc(t('settings.debugLoggingDesc'))
 			.addToggle((toggle) =>
 				toggle.setValue(this.plugin.settings.debugLogging).onChange(async (value) => {
 					this.plugin.settings.debugLogging = value;
@@ -314,18 +322,22 @@ export class UgreenSyncSettingTab extends PluginSettingTab {
 				type: 'group' as const,
 				items: [
 					{
-						name: 'Connection',
+						name: t('settings.connection'),
 						render: (_setting: Setting, _group: SettingGroup) => {
 							const isSignedIn = this.plugin.settings.session !== undefined;
-							_setting.setName(isSignedIn ? 'Signed in' : 'Not signed in');
+							_setting.setName(isSignedIn ? t('settings.signedIn') : t('settings.notSignedIn'));
 							_setting.setDesc(
 								isSignedIn
-									? `Signed in${this.plugin.settings.username.trim() === '' ? '.' : ` as ${this.plugin.settings.username}.`}`
-									: 'Sign in before running sync.',
+									? formatConnectionDesc(
+											this.plugin.settings.url,
+											this.plugin.settings.ugreenLinkId,
+											this.plugin.settings.username,
+										)
+									: t('settings.signInBeforeSync'),
 							);
 							_setting.addButton((button) => {
 								if (isSignedIn) {
-									button.setButtonText('Log out').onClick(() => {
+									button.setButtonText(t('settings.logOut')).onClick(() => {
 										new LogoutConfirmModal(
 											this.app,
 											async () => {
@@ -337,7 +349,7 @@ export class UgreenSyncSettingTab extends PluginSettingTab {
 									return;
 								}
 								button
-									.setButtonText('Sign in')
+									.setButtonText(t('settings.signIn'))
 									.setCta()
 									.onClick(() => {
 										void this.plugin.signIn().then(() => this.update());
@@ -349,19 +361,17 @@ export class UgreenSyncSettingTab extends PluginSettingTab {
 			},
 			{
 				type: 'group' as const,
-				heading: 'Settings',
+				heading: t('settings.heading'),
 				items: [
 					{
-						name: 'NAS sync directory',
+						name: t('settings.nasSyncDir'),
 						render: (setting: Setting, group: SettingGroup) => {
 							const isSignedIn = this.plugin.settings.session !== undefined;
-							setting.setDesc(
-								'The plugin creates this directory on the NAS if it does not exist.',
-							);
+							setting.setDesc(t('settings.nasSyncDirDesc'));
 							setting.addText((text) => {
 								text.inputEl.disabled = !isSignedIn;
 								text
-									.setPlaceholder(isSignedIn ? 'Browse to select' : 'Sign in to config')
+									.setPlaceholder(isSignedIn ? t('settings.browsePlaceholder') : t('settings.signInToConfigPlaceholder'))
 									.setValue(isSignedIn ? this.plugin.settings.remoteBaseDir : '')
 									.onChange(async (value) => {
 										await this.plugin.setRemoteBaseDir(normalizeRemoteBaseDir(value));
@@ -371,7 +381,7 @@ export class UgreenSyncSettingTab extends PluginSettingTab {
 							});
 							setting.addButton((button) => {
 								button.buttonEl.disabled = !isSignedIn;
-								button.setButtonText('Browse').onClick(async () => {
+								button.setButtonText(t('settings.browse')).onClick(async () => {
 									try {
 										const client = await prepareAuthenticatedUgreenClient(this.plugin.settings);
 										new RemoteDirectoryPickerModal(this.app, {
@@ -384,7 +394,7 @@ export class UgreenSyncSettingTab extends PluginSettingTab {
 											},
 										}).open();
 									} catch (error) {
-										new Notice(`Could not open NAS browser: ${formatUgreenError(error)}`, 8000);
+										new Notice(t('notice.couldNotOpenBrowser', { error: formatUgreenError(error) }), 8000);
 									}
 								});
 							});
@@ -393,30 +403,31 @@ export class UgreenSyncSettingTab extends PluginSettingTab {
 
 							if (
 								this.plugin.settings.autoSyncManualBlockReason ===
-								'nas-dir-changed'
+								'nas-dir-changed' &&
+								this.plugin.settings.remoteBaseDir.trim() !== ''
 							) {
 								const blockWarningEl = group.listEl.createDiv({
 									cls: 'ugreen-sync-setting-message mod-warning',
 								});
 								blockWarningEl.setText(
-									`Sync is blocked because the NAS directory was changed. Restore it to "${this.plugin.settings.lastSyncRemoteDir}" or reset sync history in Actions.`,
+									t('settings.syncBlockedNasDir', { path: this.plugin.settings.lastSyncRemoteDir }),
 								);
 							}
 						},
 					},
 					{
-						name: 'Auto sync',
+						name: t('settings.autoSync'),
 						desc: getAutoSyncDescription(this.plugin.settings.hasPendingChanges, this.plugin.settings.lastLocalChangeAt),
 						control: { type: 'toggle' as const, key: 'autoSyncEnabled', disabled: () => !this.hasActionsEnabled() },
 					},
 					{
-						name: 'Auto-sync interval',
-						desc: 'How often automatic sync runs while auto-sync is enabled.',
+						name: t('settings.autoSyncInterval'),
+						desc: t('settings.autoSyncIntervalDesc'),
 						control: {
 						type: 'dropdown' as const,
 							key: 'autoSyncIntervalMinutes',
 							defaultValue: String(DEFAULT_AUTO_SYNC_INTERVAL_MINUTES),
-							options: AUTO_SYNC_INTERVAL_OPTIONS,
+							options: getAutoSyncIntervalOptions(),
 							disabled: () => !this.hasActionsEnabled(),
 						},
 					},
@@ -424,7 +435,7 @@ export class UgreenSyncSettingTab extends PluginSettingTab {
 			},
 			{
 				type: 'group' as const,
-				heading: 'Actions',
+				heading: t('settings.actions'),
 				extraButtons: [
 					(btn: ExtraButtonComponent) => {
 						btn.setIcon('lucide-ellipsis');
@@ -441,14 +452,14 @@ export class UgreenSyncSettingTab extends PluginSettingTab {
 				],
 				items: [
 					{
-						name: 'Manual sync',
+						name: t('settings.manualSync'),
 						render: (setting: Setting) => {
 							const actionsEnabled = this.hasActionsEnabled();
-							setting.setDesc('Run a sync operation immediately.');
+							setting.setDesc(t('settings.manualSyncDesc'));
 							setting.addButton((button) => {
 								button.buttonEl.disabled = !actionsEnabled;
 								button
-									.setButtonText('Sync now')
+									.setButtonText(t('menu.syncNow'))
 									.setCta()
 									.onClick(() => {
 										void this.plugin.syncNow();
@@ -457,37 +468,35 @@ export class UgreenSyncSettingTab extends PluginSettingTab {
 						},
 					},
 					{
-						name: 'Conflict resolver',
+						name: t('settings.conflictResolver'),
 						render: (setting: Setting) => {
 							const actionsEnabled = this.hasActionsEnabled();
-							setting.setDesc(
-								'Conflicted files are stored in .conflicts. You can resolve them using the resolver, or manually clear out the .conflicts folder.',
-							);
+							setting.setDesc(t('settings.conflictResolverDesc'));
 							setting.addButton((button) => {
 								button.buttonEl.disabled = !actionsEnabled;
-								button.setButtonText('Resolve conflicts').onClick(() => {
+								button.setButtonText(t('settings.resolveConflicts')).onClick(() => {
 									void this.plugin.resolveConflicts();
 								});
 							});
 						},
 					},
 					{
-						name: 'Sync history',
+						name: t('settings.syncHistory'),
 						render: (setting: Setting) => {
 							const actionsEnabled = this.hasActionsEnabled();
 							setting.setDesc(
 								this.plugin.settings.lastSyncAt === 0
-									? 'This vault has not synced yet.'
-									: `Last synced ${new Date(this.plugin.settings.lastSyncAt).toLocaleString()}.`,
+									? t('settings.neverSynced')
+									: t('settings.lastSynced', { time: new Date(this.plugin.settings.lastSyncAt).toLocaleString() }),
 							);
 							setting.addButton((button) => {
 								button.buttonEl.disabled = !actionsEnabled;
-								button.setButtonText('Reset history').onClick(() => {
+								button.setButtonText(t('settings.resetHistory')).onClick(() => {
 									new ResetHistoryConfirmModal(
 										this.app,
 										async () => {
 											await this.plugin.clearSyncHistory();
-											new Notice('UGREEN sync history reset. Files were not deleted.');
+											new Notice(t('notice.resetHistory'));
 											this.update();
 										},
 									).open();
@@ -499,13 +508,13 @@ export class UgreenSyncSettingTab extends PluginSettingTab {
 			},
 			{
 				type: 'group' as const,
-				heading: 'Diagnostics',
+				heading: t('settings.diagnostics'),
 				visible: () => this.diagnosticsVisible,
 				items: [
 					{
-						name: 'Show diagnostics',
+						name: t('settings.showDiagnostics'),
 						render: (setting: Setting) => {
-							setting.setDesc('Turn this off to hide diagnostics settings again.');
+							setting.setDesc(t('settings.showDiagnosticsDesc'));
 							setting.addToggle((toggle) =>
 								toggle.setValue(true).onChange((value) => {
 									this.diagnosticsVisible = value;
@@ -517,8 +526,8 @@ export class UgreenSyncSettingTab extends PluginSettingTab {
 						},
 					},
 					{
-						name: 'Debug logging',
-						desc: 'Log sync decisions and file operations to the developer console.',
+						name: t('settings.debugLogging'),
+						desc: t('settings.debugLoggingDesc'),
 						control: { type: 'toggle' as const, key: 'debugLogging' },
 					},
 				],
@@ -577,7 +586,7 @@ export class UgreenSyncSettingTab extends PluginSettingTab {
 			if (checkId === this.remoteBaseDirCheckId && messageEl.isConnected) {
 				this.setRemoteBaseDirMessage(
 					messageEl,
-					`Could not check NAS sync directory access: ${formatUgreenError(error)}`,
+					t('notice.checkNasAccessFailed', { error: formatUgreenError(error) }),
 				);
 			}
 		}
@@ -594,11 +603,12 @@ export class UgreenSyncSettingTab extends PluginSettingTab {
 		}
 
 		const blocked =
-			this.plugin.settings.autoSyncManualBlockReason === 'nas-dir-changed';
+			this.plugin.settings.autoSyncManualBlockReason === 'nas-dir-changed' &&
+			this.plugin.settings.remoteBaseDir.trim() !== '';
 		this.nasDirBlockWarningEl.toggleClass('is-hidden', !blocked);
 		if (blocked) {
 			this.nasDirBlockWarningEl.setText(
-				`Sync is blocked because the NAS directory was changed. Restore it to "${this.plugin.settings.lastSyncRemoteDir}" or reset sync history in Actions.`,
+				t('settings.syncBlockedNasDir', { path: this.plugin.settings.lastSyncRemoteDir }),
 			);
 		}
 	}
@@ -619,27 +629,27 @@ class ResetHistoryConfirmModal extends Modal {
 
 	onOpen() {
 		this.modalEl.addClass('ugreen-sync-reset-history-modal');
-		this.setTitle('Reset sync history');
+		this.setTitle(t('modal.resetHistoryTitle'));
 		this.contentEl.empty();
 
 		this.contentEl.createEl('p', {
-			text: 'This resets the sync state.',
+			text: t('modal.resetHistoryLine1'),
 		});
 		this.contentEl.createEl('p', {
-			text: 'Without a sync state, the next sync will perform a conservative two-way sync. Files that exist on only one side will be copied to the other side, and files that exist on both sides will be compared by content.',
+			text: t('modal.resetHistoryLine2'),
 		});
 		this.contentEl.createEl('p', {
-			text: 'Any content difference will be treated as a conflict and saved to the .conflicts folder.',
+			text: t('modal.resetHistoryLine3'),
 		});
 
 		const actionsEl = this.contentEl.createDiv({
 			cls: 'ugreen-sync-modal-actions',
 		});
 		new ButtonComponent(actionsEl)
-			.setButtonText('Cancel')
+			.setButtonText(t('modal.cancel'))
 			.onClick(() => this.close());
 		new ButtonComponent(actionsEl)
-			.setButtonText('Reset history')
+			.setButtonText(t('modal.resetHistory'))
 			.setCta()
 			.onClick(() => {
 				void this.onConfirm().then(() => this.close());
@@ -661,24 +671,24 @@ class LogoutConfirmModal extends Modal {
 
 	onOpen() {
 		this.modalEl.addClass('ugreen-sync-reset-history-modal');
-		this.setTitle('Log out of UGREEN NAS');
+		this.setTitle(t('modal.logoutTitle'));
 		this.contentEl.empty();
 
 		this.contentEl.createEl('p', {
-			text: 'You will be signed out and the session will be cleared.',
+			text: t('modal.logoutLine1'),
 		});
 		this.contentEl.createEl('p', {
-			text: 'Auto-sync and any pending sync operations will be cancelled. You will need to sign in again before syncing.',
+			text: t('modal.logoutLine2'),
 		});
 
 		const actionsEl = this.contentEl.createDiv({
 			cls: 'ugreen-sync-modal-actions',
 		});
 		new ButtonComponent(actionsEl)
-			.setButtonText('Cancel')
+			.setButtonText(t('modal.cancel'))
 			.onClick(() => this.close());
 		new ButtonComponent(actionsEl)
-			.setButtonText('Log out')
+			.setButtonText(t('modal.logOut'))
 			.setCta()
 			.onClick(() => {
 				void this.onConfirm().then(() => this.close());
@@ -691,7 +701,7 @@ class LogoutConfirmModal extends Modal {
 }
 
 function normalizeAutoSyncIntervalMinutes(minutes: number): number {
-	if (!Number.isFinite(minutes) || AUTO_SYNC_INTERVAL_OPTIONS[String(minutes)] === undefined) {
+	if (!Number.isFinite(minutes) || getAutoSyncIntervalOptions()[String(minutes)] === undefined) {
 		return DEFAULT_AUTO_SYNC_INTERVAL_MINUTES;
 	}
 
@@ -700,12 +710,30 @@ function normalizeAutoSyncIntervalMinutes(minutes: number): number {
 
 function getAutoSyncDescription(hasPendingChanges: boolean, lastLocalChangeAt: number): string {
 	if (!hasPendingChanges) {
-		return 'Run sync automatically after launch checks, before hiding or quitting, and on the interval.';
+		return t('settings.autoSyncDesc');
 	}
 
 	if (lastLocalChangeAt === 0) {
-		return 'Local changes have not synced yet.';
+		return t('settings.autoSyncPending');
 	}
 
-	return `Local changes since ${new Date(lastLocalChangeAt).toLocaleString()} have not synced yet.`;
+	return t('settings.autoSyncPendingSince', { time: new Date(lastLocalChangeAt).toLocaleString() });
+}
+
+function formatConnectionDesc(url: string, ugreenLinkId: string, username: string): string {
+	const parts: string[] = [];
+
+	if (ugreenLinkId.trim() !== '') {
+		parts.push(`UGREENlink: ${ugreenLinkId}`);
+	} else {
+		const isHttp = url.trim().toLowerCase().startsWith('http://');
+		const host = url.trim().replace(/^https?:\/\//i, '');
+		parts.push(`${isHttp ? 'HTTP' : 'HTTPS'}: ${host}`);
+	}
+
+	if (username.trim() !== '') {
+		parts.push(username);
+	}
+
+	return parts.join(' — ');
 }
