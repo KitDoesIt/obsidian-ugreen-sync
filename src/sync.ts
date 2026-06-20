@@ -17,8 +17,11 @@ import { debugLog } from './debug';
 
 const MTIME_TOLERANCE_MS = 2000;
 const PLUGIN_ID = 'obsidian-ugreen-sync';
+const CONFLICTS_FOLDER = '.conflicts';
 
 export async function runSync(vault: Vault, settings: UgreenSyncSettings): Promise<SyncResult> {
+	await ensureNoUnresolvedConflicts(vault);
+
 	debugLog(settings, 'sync start', {
 		localFolders: settings.localFolders,
 		remoteBaseDir: settings.remoteBaseDir,
@@ -101,15 +104,10 @@ async function syncExistingFile(
 	}
 
 	if (localChanged && remoteChanged) {
-		if (local.mtime >= remote.mtime) {
-			debugLog(settings, 'sync decision upload newer local', { path: local.path });
-			await uploadAndRecord(vault, settings, client, local, result);
-		} else {
-			debugLog(settings, 'sync decision conflict download newer remote', { path: local.path });
-			await createConflictCopy(vault, settings, local.path);
-			result.conflicts += 1;
-			await downloadAndRecord(vault, settings, client, remote, result);
-		}
+		debugLog(settings, 'sync decision conflict download remote', { path: local.path });
+		await createConflictCopy(vault, settings, local);
+		result.conflicts += 1;
+		await downloadAndRecord(vault, settings, client, remote, result);
 		return;
 	}
 
@@ -231,24 +229,33 @@ async function ensureLocalParent(vault: Vault, settings: UgreenSyncSettings, pat
 	}
 }
 
-async function createConflictCopy(vault: Vault, settings: UgreenSyncSettings, path: string): Promise<void> {
-	const conflictPath = getConflictPath(path);
+async function createConflictCopy(vault: Vault, settings: UgreenSyncSettings, local: LocalFileMeta): Promise<void> {
+	const conflictPath = getConflictPath(local.path);
 	await ensureLocalParent(vault, settings, conflictPath);
-	debugLog(settings, 'local conflict copy start', { path, conflictPath });
-	await vault.adapter.copy(path, conflictPath);
-	debugLog(settings, 'local conflict copy complete', { path, conflictPath });
+	const content = await vault.adapter.readBinary(local.path);
+	const options = { mtime: local.mtime };
+	debugLog(settings, 'local conflict copy start', { path: local.path, conflictPath, options });
+	await vault.adapter.writeBinary(conflictPath, content, options);
+	debugLog(settings, 'local conflict copy complete', { path: local.path, conflictPath, options });
 }
 
 function getConflictPath(path: string): string {
 	const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-	const lastSlash = path.lastIndexOf('/');
-	const directory = lastSlash === -1 ? '' : path.slice(0, lastSlash + 1);
-	const filename = lastSlash === -1 ? path : path.slice(lastSlash + 1);
+	const conflictPath = `${CONFLICTS_FOLDER}/${path}`;
+	const lastSlash = conflictPath.lastIndexOf('/');
+	const directory = lastSlash === -1 ? '' : conflictPath.slice(0, lastSlash + 1);
+	const filename = lastSlash === -1 ? conflictPath : conflictPath.slice(lastSlash + 1);
 	const lastDot = filename.lastIndexOf('.');
 	if (lastDot <= 0) {
 		return `${directory}${filename}.conflict-${timestamp}`;
 	}
 	return `${directory}${filename.slice(0, lastDot)}.conflict-${timestamp}${filename.slice(lastDot)}`;
+}
+
+async function ensureNoUnresolvedConflicts(vault: Vault): Promise<void> {
+	if (await vault.adapter.exists(CONFLICTS_FOLDER)) {
+		throw new Error('Unresolved sync conflicts exist in .conflicts. Resolve them before syncing again.');
+	}
 }
 
 function hasLocalChanged(local: LocalFileMeta, previous: SyncStateEntry): boolean {
