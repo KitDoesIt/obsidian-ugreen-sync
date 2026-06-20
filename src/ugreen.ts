@@ -272,7 +272,7 @@ export async function downloadRemoteFile(
 		remotePath,
 		size: bytes.byteLength,
 	});
-	return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+	return new Uint8Array(bytes).buffer;
 }
 
 export async function trashRemoteFile(
