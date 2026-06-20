@@ -183,10 +183,19 @@ export default class UgreenSyncPlugin extends Plugin {
 	}
 
 	async loadSettings() {
-		const savedSettings = ((await this.loadData()) ?? {}) as Partial<UgreenSyncSettings> & {
-			password?: string;
-		};
-		delete savedSettings.password;
+		const savedData = ((await this.loadData()) ?? {}) as Partial<UgreenSyncSettings>;
+		const savedSettings = Object.fromEntries(
+			Object.entries({
+				url: savedData.url,
+				ugreenLinkId: savedData.ugreenLinkId,
+				username: savedData.username,
+				session: savedData.session,
+				remoteBaseDir: savedData.remoteBaseDir,
+				debugLogging: savedData.debugLogging,
+				syncState: savedData.syncState,
+				lastSyncAt: savedData.lastSyncAt,
+			}).filter(([, value]) => value !== undefined),
+		) as Partial<UgreenSyncSettings>;
 
 		this.settings = Object.assign(
 			{},
@@ -199,9 +208,16 @@ export default class UgreenSyncPlugin extends Plugin {
 	}
 
 	async saveSettings() {
-		const data = { ...this.settings } as Record<string, unknown>;
-		delete data.password;
-		await this.saveData(data);
+		await this.saveData({
+			url: this.settings.url,
+			ugreenLinkId: this.settings.ugreenLinkId,
+			username: this.settings.username,
+			session: this.settings.session,
+			remoteBaseDir: this.settings.remoteBaseDir,
+			debugLogging: this.settings.debugLogging,
+			syncState: this.settings.syncState,
+			lastSyncAt: this.settings.lastSyncAt,
+		});
 	}
 
 	private setStatus(message: string) {

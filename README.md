@@ -7,7 +7,7 @@ Minimal Obsidian plugin for syncing vault files with a UGREEN NAS running UGOS P
 - Supports UGREEN NAS only.
 - Supports direct UGOS URL or UGREENlink ID login.
 - Runs manual two-way sync from the ribbon icon, command palette, or settings tab.
-- Lets you sync the whole vault or selected local folders.
+- Always syncs the whole vault.
 - Does not support encryption, multiple providers, scheduled sync, OAuth, S3, WebDAV, or OneDrive.
 
 ## Safety

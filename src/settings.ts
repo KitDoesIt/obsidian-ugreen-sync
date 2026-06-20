@@ -1,9 +1,8 @@
-import { App, Notice, PluginSettingTab, Setting, TFolder, normalizePath } from 'obsidian';
+import { App, Notice, PluginSettingTab, Setting, normalizePath } from 'obsidian';
 import type UgreenSyncPlugin from './main';
 
 export class UgreenSyncSettingTab extends PluginSettingTab {
 	plugin: UgreenSyncPlugin;
-	private folderToAdd = '/';
 
 	constructor(app: App, plugin: UgreenSyncPlugin) {
 		super(app, plugin);
@@ -64,54 +63,6 @@ export class UgreenSyncSettingTab extends PluginSettingTab {
 				}),
 			);
 
-		new Setting(containerEl).setName('Local folders').setHeading();
-		containerEl.createEl('p', {
-			text:
-				this.plugin.settings.localFolders.length === 0
-					? 'Sync scope: entire vault.'
-					: 'Sync scope: selected folders only.',
-		});
-
-		new Setting(containerEl)
-			.setName('Add local folder')
-			.addDropdown((dropdown) => {
-				for (const folder of getVaultFolders(this.app)) {
-					dropdown.addOption(folder, folder === '/' ? 'Entire vault' : folder);
-				}
-				dropdown.setValue(this.folderToAdd);
-				dropdown.onChange((value) => {
-					this.folderToAdd = value;
-				});
-			})
-			.addButton((button) =>
-				button.setButtonText('Add').onClick(async () => {
-					if (this.folderToAdd === '/') {
-						this.plugin.settings.localFolders = [];
-					} else if (!this.plugin.settings.localFolders.includes(this.folderToAdd)) {
-						this.plugin.settings.localFolders = [
-							...this.plugin.settings.localFolders,
-							this.folderToAdd,
-						].sort();
-					}
-					await this.plugin.saveSettings();
-					this.display();
-				}),
-			);
-
-		for (const folder of this.plugin.settings.localFolders) {
-			new Setting(containerEl)
-				.setName(folder)
-				.addButton((button) =>
-					button.setButtonText('Remove').onClick(async () => {
-						this.plugin.settings.localFolders = this.plugin.settings.localFolders.filter(
-							(path) => path !== folder,
-						);
-						await this.plugin.saveSettings();
-						this.display();
-					}),
-				);
-		}
-
 		new Setting(containerEl).setName('Diagnostics').setHeading();
 
 		new Setting(containerEl)
@@ -132,7 +83,7 @@ export class UgreenSyncSettingTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.setName('Manual sync')
-			.setDesc('Runs a conservative two-way sync for the selected local folders.')
+			.setDesc('Runs a conservative two-way sync for the entire vault.')
 			.addButton((button) =>
 				button
 					.setButtonText('Sync now')
@@ -168,17 +119,6 @@ export class UgreenSyncSettingTab extends PluginSettingTab {
 				}),
 			);
 	}
-}
-
-function getVaultFolders(app: App): string[] {
-	const folders = app.vault
-		.getAllLoadedFiles()
-		.filter((file): file is TFolder => file instanceof TFolder)
-		.map((folder) => folder.path)
-		.filter((path) => path !== '' && !path.startsWith(`${app.vault.configDir}/`))
-		.sort();
-
-	return ['/', ...folders];
 }
 
 function normalizeRemoteBaseDir(value: string): string {

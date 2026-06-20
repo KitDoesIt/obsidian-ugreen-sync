@@ -1,4 +1,4 @@
-import { normalizePath, TFile, Vault } from 'obsidian';
+import { Vault } from 'obsidian';
 import {
 	downloadRemoteFile,
 	listRemoteFiles,
@@ -22,7 +22,6 @@ export async function runSync(vault: Vault, settings: UgreenSyncSettings): Promi
 	await ensureNoUnresolvedConflicts(vault);
 
 	debugLog(settings, 'sync start', {
-		localFolders: settings.localFolders,
 		remoteBaseDir: settings.remoteBaseDir,
 		hasPreviousState: Object.keys(settings.syncState).length > 0,
 	});
@@ -45,11 +44,6 @@ export async function runSync(vault: Vault, settings: UgreenSyncSettings): Promi
 	};
 
 	for (const path of [...paths].sort()) {
-		if (!isInScope(path, settings.localFolders)) {
-			debugLog(settings, 'sync skip out of scope', { path });
-			continue;
-		}
-
 		const local = localFiles.get(path);
 		const remote = remoteFiles.get(path);
 		const previous = settings.syncState[path];
@@ -198,12 +192,6 @@ async function listLocalFiles(
 ): Promise<Map<string, LocalFileMeta>> {
 	const files = new Map<string, LocalFileMeta>();
 	for (const file of vault.getFiles()) {
-		if (!(file instanceof TFile) || !shouldSyncLocalFile(file.path, settings.localFolders)) {
-			if (file instanceof TFile) {
-				debugLog(settings, 'local index skip', { path: file.path });
-			}
-			continue;
-		}
 		const meta = {
 			path: file.path,
 			mtime: file.stat.mtime,
@@ -307,20 +295,4 @@ function localFromRemote(remote: RemoteFileMeta): LocalFileMeta {
 		mtime: remote.mtime,
 		size: remote.size,
 	};
-}
-
-function isInScope(path: string, localFolders: string[]): boolean {
-	if (localFolders.length === 0) {
-		return true;
-	}
-
-	const normalizedPath = normalizePath(path);
-	return localFolders.some((folder) => {
-		const normalizedFolder = normalizePath(folder).replace(/\/+$/g, '');
-		return normalizedPath === normalizedFolder || normalizedPath.startsWith(`${normalizedFolder}/`);
-	});
-}
-
-function shouldSyncLocalFile(path: string, localFolders: string[]): boolean {
-	return isInScope(path, localFolders);
 }
