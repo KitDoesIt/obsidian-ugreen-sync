@@ -3,7 +3,7 @@ import { openUgreenLoginModal } from './login';
 import { UgreenSyncSettingTab } from './settings';
 import { DEFAULT_SETTINGS, UgreenSyncSettings } from './types';
 import { runSync } from './sync';
-import { formatUgreenError, hasValidUgreenSession, logUgreenError } from './ugreen';
+import { formatUgreenError, getRemoteBaseDirAccessError, hasValidUgreenSession, logUgreenError } from './ugreen';
 import { hasUnresolvedConflicts, openConflictPrompt, openConflictResolver } from './conflicts';
 import { debugLog } from './debug';
 
@@ -17,6 +17,15 @@ export default class UgreenSyncPlugin extends Plugin {
 		await this.loadSettings();
 
 		this.ribbonIcon = this.addRibbonIcon('sync', 'Sync with UGREEN NAS', () => {
+			if (!this.isSignedIn()) {
+				new Notice('Sign in to UGREEN NAS before syncing.');
+				return;
+			}
+			if (!this.hasRemoteBaseDir()) {
+				new Notice('Set a NAS sync directory before syncing.');
+				return;
+			}
+
 			void this.syncNow();
 		});
 
@@ -31,16 +40,32 @@ export default class UgreenSyncPlugin extends Plugin {
 		this.addCommand({
 			id: 'sync-now',
 			name: 'Sync now',
-			callback: () => {
-				void this.syncNow();
+			checkCallback: (checking) => {
+				if (!this.isSignedIn() || !this.hasRemoteBaseDir()) {
+					return false;
+				}
+
+				if (!checking) {
+					void this.syncNow();
+				}
+
+				return true;
 			},
 		});
 
 		this.addCommand({
 			id: 'resolve-conflicts',
 			name: 'Resolve sync conflicts',
-			callback: () => {
-				void this.resolveConflicts();
+			checkCallback: (checking) => {
+				if (!this.isSignedIn() || !this.hasRemoteBaseDir()) {
+					return false;
+				}
+
+				if (!checking) {
+					void this.resolveConflicts();
+				}
+
+				return true;
 			},
 		});
 
@@ -56,6 +81,17 @@ export default class UgreenSyncPlugin extends Plugin {
 	}
 
 	async syncNow() {
+		if (!this.isSignedIn()) {
+			this.setStatus('UGREEN sync needs sign-in');
+			new Notice('Sign in to UGREEN NAS before syncing.');
+			return;
+		}
+		if (!this.hasRemoteBaseDir()) {
+			this.setStatus('UGREEN sync needs NAS directory');
+			new Notice('Set a NAS sync directory before syncing.');
+			return;
+		}
+
 		if (this.syncInProgress) {
 			new Notice('UGREEN sync is already running.');
 			return;
@@ -98,6 +134,17 @@ export default class UgreenSyncPlugin extends Plugin {
 	}
 
 	async resolveConflicts() {
+		if (!this.isSignedIn()) {
+			this.setStatus('UGREEN sync needs sign-in');
+			new Notice('Sign in to UGREEN NAS before resolving conflicts.');
+			return;
+		}
+		if (!this.hasRemoteBaseDir()) {
+			this.setStatus('UGREEN sync needs NAS directory');
+			new Notice('Set a NAS sync directory before resolving conflicts.');
+			return;
+		}
+
 		await openConflictResolver(this.app, () => {
 			void this.updateConflictStatus();
 		});
@@ -115,6 +162,8 @@ export default class UgreenSyncPlugin extends Plugin {
 		this.settings.session = result.session;
 		await this.saveSettings();
 		this.setStatus('UGREEN sync signed in');
+		void this.checkRemoteBaseDirAccessAfterLogin();
+		void this.updateConflictStatus();
 		return true;
 	}
 
@@ -122,6 +171,7 @@ export default class UgreenSyncPlugin extends Plugin {
 		this.settings.session = undefined;
 		await this.saveSettings();
 		this.setStatus('UGREEN sync needs sign-in');
+		void this.updateConflictStatus();
 		new Notice('Logged out of UGREEN NAS.');
 	}
 
@@ -182,6 +232,30 @@ export default class UgreenSyncPlugin extends Plugin {
 		return this.signIn();
 	}
 
+	private isSignedIn(): boolean {
+		return this.settings.session !== undefined;
+	}
+
+	private hasRemoteBaseDir(): boolean {
+		return this.settings.remoteBaseDir.trim() !== '';
+	}
+
+	private async checkRemoteBaseDirAccessAfterLogin(): Promise<void> {
+		if (!this.hasRemoteBaseDir()) {
+			return;
+		}
+
+		try {
+			const accessError = await getRemoteBaseDirAccessError(this.settings);
+			if (accessError !== undefined) {
+				new Notice(accessError, 8000);
+			}
+		} catch (error) {
+			logUgreenError('remote base directory access check failed', error);
+			new Notice(`Could not check NAS sync directory access: ${formatUgreenError(error)}`, 8000);
+		}
+	}
+
 	async loadSettings() {
 		const savedData = ((await this.loadData()) ?? {}) as Partial<UgreenSyncSettings>;
 		const savedSettings = Object.fromEntries(
@@ -202,9 +276,6 @@ export default class UgreenSyncPlugin extends Plugin {
 			DEFAULT_SETTINGS,
 			savedSettings,
 		);
-		if (this.settings.remoteBaseDir === '') {
-			this.settings.remoteBaseDir = this.app.vault.getName();
-		}
 	}
 
 	async saveSettings() {
@@ -225,8 +296,23 @@ export default class UgreenSyncPlugin extends Plugin {
 	}
 
 	private async updateConflictStatus() {
+		if (!this.isSignedIn() || !this.hasRemoteBaseDir()) {
+			this.ribbonIcon?.removeClass('ugreen-sync-conflict-ribbon');
+			this.ribbonIcon?.removeClass('mod-warning');
+			this.ribbonIcon?.addClass('ugreen-sync-disabled-ribbon');
+			this.ribbonIcon?.setAttribute('aria-disabled', 'true');
+			this.ribbonIcon?.setAttribute(
+				'aria-label',
+				this.isSignedIn() ? 'Set a NAS sync directory before syncing' : 'Sign in to UGREEN NAS before syncing',
+			);
+			this.ribbonIcon?.setAttribute('aria-label-position', 'right');
+			return;
+		}
+
 		const hasConflicts = await hasUnresolvedConflicts(this.app.vault);
 		const conflictStatus = 'UGREEN sync conflicts need resolution';
+		this.ribbonIcon?.removeClass('ugreen-sync-disabled-ribbon');
+		this.ribbonIcon?.removeAttribute('aria-disabled');
 		this.ribbonIcon?.toggleClass('ugreen-sync-conflict-ribbon', hasConflicts);
 		this.ribbonIcon?.toggleClass('mod-warning', hasConflicts);
 		this.ribbonIcon?.setAttribute(

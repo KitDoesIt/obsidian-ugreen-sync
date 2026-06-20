@@ -97,6 +97,28 @@ async function syncExistingFile(
 	}
 
 	if (localChanged && remoteChanged) {
+		if (local.size === remote.size) {
+			const localContent = await vault.adapter.readBinary(local.path);
+			const remoteContent = await downloadRemoteFile(client, settings, remote.path);
+			if (arrayBuffersEqual(localContent, remoteContent)) {
+				if (local.mtime > remote.mtime) {
+					debugLog(settings, 'sync decision same content upload newer local', { path: local.path });
+					await uploadAndRecord(vault, settings, client, local, result);
+					return;
+				}
+
+				if (remote.mtime > local.mtime) {
+					debugLog(settings, 'sync decision same content download newer remote', { path: remote.path });
+					await writeDownloadedContentAndRecord(vault, settings, remote, remoteContent, result);
+					return;
+				}
+
+				debugLog(settings, 'sync decision same content already matched', { path: local.path });
+				setSynced(result.syncState, local, remote);
+				return;
+			}
+		}
+
 		debugLog(settings, 'sync decision conflict download remote', { path: local.path });
 		await createConflictCopy(vault, settings, local);
 		result.conflicts += 1;
@@ -178,6 +200,16 @@ async function downloadAndRecord(
 ): Promise<void> {
 	await ensureLocalParent(vault, settings, remote.path);
 	const content = await downloadRemoteFile(client, settings, remote.path);
+	await writeDownloadedContentAndRecord(vault, settings, remote, content, result);
+}
+
+async function writeDownloadedContentAndRecord(
+	vault: Vault,
+	settings: UgreenSyncSettings,
+	remote: RemoteFileMeta,
+	content: ArrayBuffer,
+	result: SyncResult,
+): Promise<void> {
 	const options = { mtime: remote.mtime };
 	debugLog(settings, 'local write start', { path: remote.path, size: content.byteLength, options });
 	await vault.adapter.writeBinary(remote.path, content, options);
@@ -274,6 +306,22 @@ function hasRemoteChanged(remote: RemoteFileMeta, previous: SyncStateEntry): boo
 		remote.etag !== previous.etag ||
 		Math.abs(remote.mtime - previous.remoteMtime) > MTIME_TOLERANCE_MS
 	);
+}
+
+function arrayBuffersEqual(left: ArrayBuffer, right: ArrayBuffer): boolean {
+	if (left.byteLength !== right.byteLength) {
+		return false;
+	}
+
+	const leftBytes = new Uint8Array(left);
+	const rightBytes = new Uint8Array(right);
+	for (let index = 0; index < leftBytes.length; index += 1) {
+		if (leftBytes[index] !== rightBytes[index]) {
+			return false;
+		}
+	}
+
+	return true;
 }
 
 function setSynced(

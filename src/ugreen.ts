@@ -1,7 +1,7 @@
 import { requestUrl } from 'obsidian';
 import type { RequestUrlParam, RequestUrlResponse } from 'obsidian';
 import { UgosApiError, UgosClient, UgosHttpError } from 'ug-file';
-import type { ConflictAction, SessionContainer, UgosDirent, UgosLoginResult } from 'ug-file';
+import type { ConflictAction, SessionContainer, UgosDirent, UgosLoginResult, UgosRoot } from 'ug-file';
 import { UgreenSyncSettings, RemoteFileMeta } from './types';
 import { debugLog } from './debug';
 
@@ -128,6 +128,30 @@ export async function prepareUgreenClient(settings: UgreenSyncSettings): Promise
 		mode: settings.url.trim() !== '' ? 'url' : 'ugreenlink',
 		remoteBaseDir: settings.remoteBaseDir,
 	});
+	const client = await prepareAuthenticatedUgreenClient(settings);
+	const accessError = await getRemoteBaseDirAccessErrorForClient(client, settings);
+	if (accessError !== undefined) {
+		throw new Error(accessError);
+	}
+
+	const basePath = getRemoteBasePath(settings);
+	debugLog(settings, 'remote base exists check', { path: basePath });
+	if (!(await client.exists(basePath))) {
+		await mkdirIfMissing(client, settings, basePath);
+	}
+	return client;
+}
+
+export async function getRemoteBaseDirAccessError(settings: UgreenSyncSettings): Promise<string | undefined> {
+	if (settings.remoteBaseDir.trim() === '') {
+		return undefined;
+	}
+
+	const client = await prepareAuthenticatedUgreenClient(settings);
+	return getRemoteBaseDirAccessErrorForClient(client, settings);
+}
+
+export async function prepareAuthenticatedUgreenClient(settings: UgreenSyncSettings): Promise<UgosClient> {
 	const client = createUgreenClient(settings);
 	const session = getSavedSession(settings);
 	if (session === undefined) {
@@ -139,12 +163,30 @@ export async function prepareUgreenClient(settings: UgreenSyncSettings): Promise
 		throw new Error('UGREEN NAS session expired. Sign in again before syncing.');
 	}
 
-	const basePath = getRemoteBasePath(settings);
-	debugLog(settings, 'remote base exists check', { path: basePath });
-	if (!(await client.exists(basePath))) {
-		await mkdirIfMissing(client, settings, basePath);
-	}
 	return client;
+}
+
+async function getRemoteBaseDirAccessErrorForClient(
+	client: UgosClient,
+	settings: UgreenSyncSettings,
+): Promise<string | undefined> {
+	if (settings.remoteBaseDir.trim() === '') {
+		return undefined;
+	}
+
+	const basePath = getRemoteBasePath(settings);
+	debugLog(settings, 'remote root access check start', { path: basePath });
+	const root = await client.root();
+	const rootPaths = getAccessibleRootPaths(root);
+	debugLog(settings, 'remote root access check roots', { path: basePath, rootPaths });
+	if (rootPaths.length === 0) {
+		return 'UGREEN NAS did not report any accessible root folders.';
+	}
+	if (rootPaths.some((rootPath) => isPathInsideRoot(basePath, rootPath))) {
+		return undefined;
+	}
+
+	return 'Use Browse to choose an accessible NAS sync directory.';
 }
 
 export function getRemoteBasePath(settings: UgreenSyncSettings): string {
@@ -457,6 +499,22 @@ function direntToRemoteFile(entry: UgosDirent, basePath: string): RemoteFileMeta
 		size: entry.size,
 		etag: `${entry.mtime}_${entry.name}`,
 	};
+}
+
+function getAccessibleRootPaths(root: UgosRoot): string[] {
+	const paths = [...root.personal, ...root.shared]
+		.map((entry) => normalizeRemotePath(entry.path))
+		.filter((path) => path !== '');
+	return [...new Set(paths)].sort();
+}
+
+function isPathInsideRoot(path: string, rootPath: string): boolean {
+	return rootPath === '/' || path === rootPath || path.startsWith(`${rootPath}/`);
+}
+
+function normalizeRemotePath(path: string): string {
+	const cleanPath = path.trim().replace(/^\/+|\/+$/g, '');
+	return cleanPath === '' ? '/' : `/${cleanPath}`;
 }
 
 function getSavedSession(settings: UgreenSyncSettings): SessionContainer | undefined {

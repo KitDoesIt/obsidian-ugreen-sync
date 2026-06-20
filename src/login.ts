@@ -54,6 +54,7 @@ class UgreenLoginModal extends Modal {
 				token: '',
 				uid: 0,
 				publicKey: '',
+				keepalive: true,
 			},
 		};
 	}
@@ -203,7 +204,11 @@ class UgreenLoginModal extends Modal {
 				hasPassword: this.draft.password !== '',
 			});
 			const client = createUgreenClient(this.draft);
-			const result = await client.login(this.draft.username, this.draft.password);
+			const result = await client.login({
+				username: this.draft.username,
+				password: this.draft.password,
+				keepalive: true,
+			});
 			if (result.success) {
 				debugLog(this.settings, 'login password success', { uid: result.session.uid });
 				this.finish(result.session);

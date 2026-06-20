@@ -1,8 +1,16 @@
 import { App, Notice, PluginSettingTab, Setting, normalizePath } from 'obsidian';
 import type UgreenSyncPlugin from './main';
+import { RemoteDirectoryPickerModal } from './remote-browser';
+import { formatUgreenError, getRemoteBaseDirAccessError, prepareAuthenticatedUgreenClient } from './ugreen';
+
+const REMOTE_BASE_DIR_CHECK_DEBOUNCE_MS = 600;
 
 export class UgreenSyncSettingTab extends PluginSettingTab {
 	plugin: UgreenSyncPlugin;
+	private actionsHeaderClicks = 0;
+	private diagnosticsVisible = false;
+	private remoteBaseDirCheckId = 0;
+	private remoteBaseDirCheckTimeout?: number;
 
 	constructor(app: App, plugin: UgreenSyncPlugin) {
 		super(app, plugin);
@@ -13,10 +21,19 @@ export class UgreenSyncSettingTab extends PluginSettingTab {
 		const { containerEl } = this;
 		containerEl.empty();
 
-		new Setting(containerEl).setName('Login').setHeading();
+		const connectionCard = this.createSection(containerEl).cardEl;
 
 		const isSignedIn = this.plugin.settings.session !== undefined;
-		new Setting(containerEl)
+		const hasRemoteBaseDir = this.plugin.settings.remoteBaseDir.trim() !== '';
+		const actionsEnabled = isSignedIn && hasRemoteBaseDir;
+		const actionButtons: HTMLButtonElement[] = [];
+		const updateActionButtons = () => {
+			const enabled = this.plugin.settings.session !== undefined && this.plugin.settings.remoteBaseDir.trim() !== '';
+			for (const buttonEl of actionButtons) {
+				buttonEl.disabled = !enabled;
+			}
+		};
+		new Setting(connectionCard)
 			.setName(isSignedIn ? 'Signed in' : 'Not signed in')
 			.setDesc(
 				isSignedIn
@@ -39,33 +56,135 @@ export class UgreenSyncSettingTab extends PluginSettingTab {
 					});
 			});
 
-		new Setting(containerEl).setName('Remote sync directory').setHeading();
-
-		new Setting(containerEl)
+		new Setting(connectionCard)
 			.setName('NAS sync directory')
 			.setDesc('The plugin creates this directory on the NAS if it does not exist.')
-			.addText((text) =>
+			.addText((text) => {
+				text.inputEl.disabled = !isSignedIn;
 				text
-					.setPlaceholder(this.app.vault.getName())
-					.setValue(this.plugin.settings.remoteBaseDir)
+					.setPlaceholder(isSignedIn ? 'Browse to select' : 'Sign in to config')
+					.setValue(isSignedIn ? this.plugin.settings.remoteBaseDir : '')
 					.onChange(async (value) => {
 						this.plugin.settings.remoteBaseDir = normalizeRemoteBaseDir(value);
+						updateActionButtons();
 						await this.plugin.saveSettings();
-					}),
+						this.scheduleRemoteBaseDirAccessCheck(remoteBaseDirMessageEl, REMOTE_BASE_DIR_CHECK_DEBOUNCE_MS);
+					});
+			})
+			.addButton((button) => {
+				button.buttonEl.disabled = !isSignedIn;
+				button.setButtonText('Browse').onClick(async () => {
+					try {
+						const client = await prepareAuthenticatedUgreenClient(this.plugin.settings);
+						new RemoteDirectoryPickerModal(this.app, {
+							client,
+							initialPath: this.plugin.settings.remoteBaseDir,
+							vaultName: this.app.vault.getName(),
+							onChoose: async (path) => {
+								this.plugin.settings.remoteBaseDir = normalizeRemoteBaseDir(path);
+								await this.plugin.saveSettings();
+								this.display();
+							},
+						}).open();
+					} catch (error) {
+						new Notice(`Could not open NAS browser: ${formatUgreenError(error)}`, 8000);
+					}
+				});
+			});
+		const remoteBaseDirMessageEl = connectionCard.createDiv({ cls: 'ugreen-sync-setting-message' });
+		this.scheduleRemoteBaseDirAccessCheck(remoteBaseDirMessageEl, 0);
+
+		const actionsSection = this.createSection(containerEl, 'Actions');
+		const actionsCard = actionsSection.cardEl;
+		const actionsHeading = actionsSection.headingSetting!;
+		actionsHeading.nameEl.addEventListener('click', () => {
+			this.actionsHeaderClicks += 1;
+			if (this.actionsHeaderClicks < 5) {
+				return;
+			}
+
+			this.actionsHeaderClicks = 0;
+			this.diagnosticsVisible = true;
+			this.display();
+		});
+
+		new Setting(actionsCard)
+			.setName('Manual sync')
+			.setDesc('Runs a conservative two-way sync for the entire vault.')
+			.addButton((button) => {
+				actionButtons.push(button.buttonEl);
+				button.buttonEl.disabled = !actionsEnabled;
+				button
+					.setButtonText('Sync now')
+					.setCta()
+					.onClick(() => {
+						void this.plugin.syncNow();
+					});
+			});
+
+		new Setting(actionsCard)
+			.setName('Conflict resolver')
+			.setDesc('Review files in .conflicts and choose which versions to keep.')
+			.addButton((button) => {
+				actionButtons.push(button.buttonEl);
+				button.buttonEl.disabled = !actionsEnabled;
+				button.setButtonText('Resolve conflicts').onClick(() => {
+					void this.plugin.resolveConflicts();
+				});
+			});
+
+		new Setting(actionsCard)
+			.setName('Sync history')
+			.setDesc(
+				this.plugin.settings.lastSyncAt === 0
+					? 'This vault has not synced yet.'
+					: `Last synced ${new Date(this.plugin.settings.lastSyncAt).toLocaleString()}.`,
 			)
-			.addButton((button) =>
-				button.setButtonText('Use vault name').onClick(async () => {
-					this.plugin.settings.remoteBaseDir = normalizeRemoteBaseDir(
-						this.app.vault.getName(),
-					);
+			.addButton((button) => {
+				actionButtons.push(button.buttonEl);
+				button.buttonEl.disabled = !actionsEnabled;
+				button.setButtonText('Reset history').onClick(async () => {
+					this.plugin.settings.syncState = {};
+					this.plugin.settings.lastSyncAt = 0;
 					await this.plugin.saveSettings();
+					new Notice('UGREEN sync history reset. Files were not deleted.');
 					this.display();
+				});
+			});
+
+		if (this.diagnosticsVisible) {
+			this.displayDiagnostics(containerEl);
+		}
+	}
+
+	private createSection(
+		containerEl: HTMLElement,
+		heading?: string,
+	): { cardEl: HTMLElement; headingSetting?: Setting } {
+		const sectionEl = containerEl.createDiv({ cls: 'setting-group' });
+		const headingSetting = heading === undefined
+			? undefined
+			: new Setting(sectionEl).setName(heading).setHeading();
+		const cardEl = sectionEl.createDiv({ cls: 'setting-items' });
+		return { cardEl, headingSetting };
+	}
+
+	private displayDiagnostics(containerEl: HTMLElement): void {
+		const diagnosticsCard = this.createSection(containerEl, 'Diagnostics').cardEl;
+
+		new Setting(diagnosticsCard)
+			.setName('Show diagnostics')
+			.setDesc('Turn this off to hide diagnostics settings again.')
+			.addToggle((toggle) =>
+				toggle.setValue(true).onChange((value) => {
+					this.diagnosticsVisible = value;
+					if (!value) {
+						this.display();
+					}
 				}),
 			);
 
-		new Setting(containerEl).setName('Diagnostics').setHeading();
-
-		new Setting(containerEl)
+		new Setting(diagnosticsCard)
 			.setName('Debug logging')
 			.setDesc('Log sync decisions and file operations to the developer console.')
 			.addToggle((toggle) =>
@@ -78,49 +197,49 @@ export class UgreenSyncSettingTab extends PluginSettingTab {
 					}
 				}),
 			);
+	}
 
-		new Setting(containerEl).setName('Actions').setHeading();
+	private scheduleRemoteBaseDirAccessCheck(messageEl: HTMLElement, delay: number): void {
+		if (this.remoteBaseDirCheckTimeout !== undefined) {
+			window.clearTimeout(this.remoteBaseDirCheckTimeout);
+			this.remoteBaseDirCheckTimeout = undefined;
+		}
 
-		new Setting(containerEl)
-			.setName('Manual sync')
-			.setDesc('Runs a conservative two-way sync for the entire vault.')
-			.addButton((button) =>
-				button
-					.setButtonText('Sync now')
-					.setCta()
-					.onClick(() => {
-						void this.plugin.syncNow();
-					}),
-			);
+		const checkId = ++this.remoteBaseDirCheckId;
+		this.setRemoteBaseDirMessage(messageEl, '');
+		if (this.plugin.settings.session === undefined || this.plugin.settings.remoteBaseDir.trim() === '') {
+			return;
+		}
 
-		new Setting(containerEl)
-			.setName('Conflict resolver')
-			.setDesc('Review files in .conflicts and choose which versions to keep.')
-			.addButton((button) =>
-				button.setButtonText('Resolve conflicts').onClick(() => {
-					void this.plugin.resolveConflicts();
-				}),
-			);
+		this.remoteBaseDirCheckTimeout = window.setTimeout(() => {
+			this.remoteBaseDirCheckTimeout = undefined;
+			void this.checkRemoteBaseDirAccess(messageEl, checkId);
+		}, delay);
+	}
 
-		new Setting(containerEl)
-			.setName('Sync history')
-			.setDesc(
-				this.plugin.settings.lastSyncAt === 0
-					? 'This vault has not synced yet.'
-					: `Last synced ${new Date(this.plugin.settings.lastSyncAt).toLocaleString()}.`,
-			)
-			.addButton((button) =>
-				button.setButtonText('Reset history').onClick(async () => {
-					this.plugin.settings.syncState = {};
-					this.plugin.settings.lastSyncAt = 0;
-					await this.plugin.saveSettings();
-					new Notice('UGREEN sync history reset. Files were not deleted.');
-					this.display();
-				}),
-			);
+	private async checkRemoteBaseDirAccess(messageEl: HTMLElement, checkId: number): Promise<void> {
+		try {
+			const accessError = await getRemoteBaseDirAccessError(this.plugin.settings);
+			if (checkId === this.remoteBaseDirCheckId && messageEl.isConnected) {
+				this.setRemoteBaseDirMessage(messageEl, accessError ?? '');
+			}
+		} catch (error) {
+			if (checkId === this.remoteBaseDirCheckId && messageEl.isConnected) {
+				this.setRemoteBaseDirMessage(
+					messageEl,
+					`Could not check NAS sync directory access: ${formatUgreenError(error)}`,
+				);
+			}
+		}
+	}
+
+	private setRemoteBaseDirMessage(messageEl: HTMLElement, message: string): void {
+		messageEl.setText(message);
+		messageEl.toggleClass('is-hidden', message === '');
 	}
 }
 
 function normalizeRemoteBaseDir(value: string): string {
-	return normalizePath(value.trim()).replace(/^\/+|\/+$/g, '');
+	const cleanPath = normalizePath(value.trim()).replace(/^\/+|\/+$/g, '');
+	return cleanPath === '' ? '' : `/${cleanPath}`;
 }
