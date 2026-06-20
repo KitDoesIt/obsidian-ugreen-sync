@@ -49,7 +49,7 @@ const STATUS_TEXTS: Record<number, string> = {
 const LOGIN_TRUST_INFO = {
 	client_type: 'obsidian-plugin',
 	system: 'obsidian',
-	dev_name: 'obsidian-ugreen-sync',
+	dev_name: 'ugreen-sync',
 };
 
 class FetchHeaders {
