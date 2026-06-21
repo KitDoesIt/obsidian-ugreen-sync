@@ -11,6 +11,7 @@
     "loggedIn": "Logged in",
     "checkFailed": "Check failed",
     "ready": "Ready",
+    "remoteChanged": "Remote changed",
     "changed": "Changed",
     "localChangesNotSynced": "Local changes not synced",
     "nasDirChanged": "NAS directory changed",

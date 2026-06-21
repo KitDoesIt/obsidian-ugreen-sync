@@ -11,6 +11,7 @@
     "loggedIn": "已登录",
     "checkFailed": "检查失败",
     "ready": "就绪",
+    "remoteChanged": "远程已更改",
     "changed": "已更改",
     "localChangesNotSynced": "本地更改尚未同步",
     "nasDirChanged": "NAS 目录已更改",

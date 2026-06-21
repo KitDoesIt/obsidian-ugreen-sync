@@ -17,12 +17,14 @@ import {
 	SyncResult,
 	UgreenSyncSettings,
 } from './types';
-import { runSync } from './sync';
+import { hasRemoteChanged, runSync } from './sync';
 import {
 	formatUgreenError,
 	getRemoteBaseDirAccessError,
 	hasValidUgreenSession,
+	listRemoteFiles,
 	logUgreenError,
+	prepareUgreenClient,
 } from './ugreen';
 import {
 	getConflictFiles,
@@ -321,6 +323,9 @@ this.setStatus({ label: t('status.loggedOut'), kind: 'warning' });
 				this.setSignedInIdleStatus(t('status.loggedIn'));
 				void this.updateConflictStatus();
 				void this.runAutoSync('launch');
+				if (!this.settings.autoSyncEnabled) {
+					void this.checkRemoteChangesOnLaunch();
+				}
 				return;
 			}
 
@@ -513,6 +518,41 @@ this.setSignedInIdleStatus(t('status.loggedIn'));
 				t('notice.checkNasAccessFailed', { error: formatUgreenError(error) }),
 				8000,
 			);
+		}
+	}
+
+	private async checkRemoteChangesOnLaunch(): Promise<void> {
+		if (!this.hasRemoteBaseDir() || !this.hasSyncHistory()) {
+			return;
+		}
+
+		try {
+			const client = await prepareUgreenClient(this.settings);
+			const remoteFiles = await listRemoteFiles(client, this.settings);
+			const syncState = this.settings.syncState;
+
+			for (const [path, remote] of remoteFiles) {
+				const previous = syncState[path];
+				if (previous === undefined || hasRemoteChanged(remote, previous)) {
+					this.setStatus({
+						label: t('status.remoteChanged'),
+						kind: 'warning',
+					});
+					return;
+				}
+			}
+
+			for (const path of Object.keys(syncState)) {
+				if (!remoteFiles.has(path)) {
+					this.setStatus({
+						label: t('status.remoteChanged'),
+						kind: 'warning',
+					});
+					return;
+				}
+			}
+		} catch {
+			// Silently ignore errors from this passive check
 		}
 	}
 
