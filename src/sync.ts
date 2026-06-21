@@ -2,9 +2,13 @@ import { Vault } from 'obsidian';
 import {
 	clearRemoteFolderCache,
 	downloadRemoteFile,
+	getRemoteBasePath,
+	isRemoteDirectoryEmpty,
 	listRemoteFiles,
 	prepareUgreenClient,
+	toRemotePath,
 	trashRemoteFile,
+	trashRemoteFolder,
 	uploadRemoteFile,
 } from './ugreen';
 import {
@@ -54,6 +58,8 @@ export async function runSync(
 		deletedRemote: 0,
 		conflicts: 0,
 	};
+	const trashedRemotePaths: string[] = [];
+	const deletedLocalPaths: string[] = [];
 
 	for (const [index, path] of sortedPaths.entries()) {
 		const local = localFiles.get(path);
@@ -69,16 +75,28 @@ export async function runSync(
 
 			if (local !== undefined) {
 				debugLog(jobSettings, 'sync local only', { path, local, previous });
-				await syncLocalOnlyFile(vault, jobSettings, client, local, previous, result);
+				await syncLocalOnlyFile(vault, jobSettings, client, local, previous, result, deletedLocalPaths);
 				continue;
 			}
 
 			if (remote !== undefined) {
 				debugLog(jobSettings, 'sync remote only', { path, remote, previous });
-				await syncRemoteOnlyFile(vault, jobSettings, client, remote, previous, result);
+				await syncRemoteOnlyFile(vault, jobSettings, client, remote, previous, result, trashedRemotePaths);
 			}
 		} finally {
 			onProgress?.({ completed: index + 1, total: sortedPaths.length, path });
+		}
+	}
+
+	if (deletedLocalPaths.length > 0 || trashedRemotePaths.length > 0) {
+		const remoteDeletedDirSet = extractParentDirSet(trashedRemotePaths);
+
+		if (trashedRemotePaths.length > 0) {
+			await cleanupEmptyRemoteFolders(client, jobSettings, trashedRemotePaths);
+		}
+
+		if (deletedLocalPaths.length > 0) {
+			await cleanupEmptyLocalFolders(vault, jobSettings, deletedLocalPaths, remoteDeletedDirSet);
 		}
 	}
 
@@ -147,6 +165,7 @@ async function syncLocalOnlyFile(
 	local: LocalFileMeta,
 	previous: SyncStateEntry | undefined,
 	result: SyncResult,
+	deletedLocalPaths: string[],
 ): Promise<void> {
 	if (previous !== undefined && !hasLocalChanged(local, previous)) {
 		debugLog(settings, 'local delete start', { path: local.path, previous });
@@ -154,6 +173,7 @@ async function syncLocalOnlyFile(
 		debugLog(settings, 'local delete complete', { path: local.path });
 		delete result.syncState[local.path];
 		result.deletedLocal += 1;
+		deletedLocalPaths.push(local.path);
 		return;
 	}
 
@@ -167,6 +187,7 @@ async function syncRemoteOnlyFile(
 	remote: RemoteFileMeta,
 	previous: SyncStateEntry | undefined,
 	result: SyncResult,
+	trashedRemotePaths: string[],
 ): Promise<void> {
 	if (previous !== undefined && !hasRemoteChanged(remote, previous)) {
 		debugLog(settings, 'remote delete start', { path: remote.path, previous });
@@ -174,10 +195,107 @@ async function syncRemoteOnlyFile(
 		debugLog(settings, 'remote delete complete', { path: remote.path });
 		delete result.syncState[remote.path];
 		result.deletedRemote += 1;
+		trashedRemotePaths.push(remote.path);
 		return;
 	}
 
 	await downloadAndRecord(vault, settings, client, remote, result);
+}
+
+function extractParentDirSet(filePaths: string[]): Set<string> {
+	const dirs = new Set<string>();
+	for (const filePath of filePaths) {
+		const parts = filePath.split('/');
+		parts.pop();
+		let dirPath = parts.join('/');
+		while (dirPath !== '') {
+			dirs.add(dirPath);
+			const parentParts = dirPath.split('/');
+			parentParts.pop();
+			dirPath = parentParts.join('/');
+		}
+	}
+	return dirs;
+}
+
+async function cleanupEmptyLocalFolders(
+	vault: Vault,
+	settings: UgreenSyncSettings,
+	deletedFilePaths: string[],
+	otherSideDirSet: Set<string>,
+): Promise<void> {
+	const candidates = new Set<string>();
+
+	for (const filePath of deletedFilePaths) {
+		const parts = filePath.split('/');
+		parts.pop();
+		let dirPath = parts.join('/');
+		while (dirPath !== '') {
+			candidates.add(dirPath);
+			const parentParts = dirPath.split('/');
+			parentParts.pop();
+			dirPath = parentParts.join('/');
+		}
+	}
+
+	const sorted = [...candidates].sort(
+		(a, b) => b.split('/').length - a.split('/').length,
+	);
+
+	for (const dir of sorted) {
+		if (otherSideDirSet.has(dir)) {
+			continue;
+		}
+
+		if (!(await vault.adapter.exists(dir))) {
+			continue;
+		}
+
+		const listed = await vault.adapter.list(dir);
+		if (listed.files.length === 0 && listed.folders.length === 0) {
+			debugLog(settings, 'local empty folder cleanup', { path: dir });
+			await vault.adapter.rmdir(dir, false);
+		}
+	}
+}
+
+async function cleanupEmptyRemoteFolders(
+	client: Awaited<ReturnType<typeof prepareUgreenClient>>,
+	settings: UgreenSyncSettings,
+	trashedFilePaths: string[],
+): Promise<void> {
+	const basePath = getRemoteBasePath(settings);
+	const candidates = new Set<string>();
+
+	for (const filePath of trashedFilePaths) {
+		const parts = filePath.split('/');
+		parts.pop();
+		let dirPath = parts.join('/');
+		while (dirPath !== '') {
+			candidates.add(dirPath);
+			const parentParts = dirPath.split('/');
+			parentParts.pop();
+			dirPath = parentParts.join('/');
+		}
+	}
+
+	const sorted = [...candidates].sort(
+		(a, b) => b.split('/').length - a.split('/').length,
+	);
+
+	for (const dir of sorted) {
+		const remoteDirPath = toRemotePath(settings, dir);
+		if (remoteDirPath === basePath) {
+			continue;
+		}
+
+		if (await isRemoteDirectoryEmpty(client, remoteDirPath)) {
+			debugLog(settings, 'remote empty folder cleanup', {
+				path: remoteDirPath,
+			});
+			await trashRemoteFolder(client, settings, dir);
+		}
+	}
 }
 
 async function uploadAndRecord(

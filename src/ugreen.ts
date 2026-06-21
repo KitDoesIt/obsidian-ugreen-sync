@@ -285,6 +285,24 @@ export async function trashRemoteFile(
 	await client.trash(remotePath);
 }
 
+export async function isRemoteDirectoryEmpty(
+	client: UgosClient,
+	remotePath: string,
+): Promise<boolean> {
+	const entries = await client.list(remotePath, { page: 1, limit: 1 });
+	return entries.length === 0;
+}
+
+export async function trashRemoteFolder(
+	client: UgosClient,
+	settings: UgreenSyncSettings,
+	localDirPath: string,
+): Promise<void> {
+	const remotePath = toRemotePath(settings, localDirPath);
+	debugLog(settings, 'remote folder trash', { localDirPath, remotePath });
+	await client.trash(remotePath);
+}
+
 export function formatUgreenError(error: unknown): string {
 	if (error instanceof UgosApiError) {
 		return joinErrorParts([
